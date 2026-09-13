@@ -6,6 +6,7 @@ import NotesPanel from './components/NotesPanel'
 import CalendarPanel from './components/CalendarPanel'
 import PomodoroPanel from './components/PomodoroPanel'
 import HabitsPanel from './components/HabitsPanel'
+import ShortcutsPanel from './components/ShortcutsPanel'
 import { BrandMark, IconHabit, IconNote, IconOverview, IconTimer, IconTodo } from './components/icons'
 import CommandPalette, { type Command } from './components/CommandPalette'
 
@@ -287,6 +288,9 @@ export default function App() {
           </div>
           <div className="cell cell-habits">
             <HabitsPanel habits={data.habits} update={update} />
+          </div>
+          <div className="cell cell-keys">
+            <ShortcutsPanel onOpenPalette={() => setPaletteOpen(true)} />
           </div>
         </div>
       </main>

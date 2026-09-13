@@ -345,7 +345,8 @@ textarea::placeholder {
   grid-template-areas:
     'todo notes cal'
     'todo notes pomo'
-    'todo notes hab';
+    'todo notes hab'
+    'todo notes keys';
 }
 
 .cell {
@@ -370,6 +371,10 @@ textarea::placeholder {
 
 .cell-habits {
   grid-area: hab;
+}
+
+.cell-keys {
+  grid-area: keys;
 }
 
 .board.v-todos {
@@ -417,7 +422,8 @@ textarea::placeholder {
       'notes'
       'cal'
       'pomo'
-      'hab';
+      'hab'
+      'keys';
   }
 }
 
@@ -1398,6 +1404,40 @@ textarea::placeholder {
 .add-sm .in {
   flex: 1;
   min-width: 0;
+}
+
+/* ---------- 快捷键卡片 ---------- */
+
+.keys-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 14px;
+}
+
+.key-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink);
+  min-width: 0;
+}
+
+.key-row kbd {
+  flex: 0 0 auto;
+  min-width: 34px;
+  text-align: center;
+}
+
+.key-row span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.keys-open {
+  width: 100%;
+  margin-top: 12px;
 }
 
 /* ---------- 加载 / 错误态 ---------- */
