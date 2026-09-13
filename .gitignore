@@ -2,6 +2,4 @@ node_modules/
 dist/
 .zcode/
 design-demos/
-data/backups/
-data/*.tmp
-data/ai-config.json
+data/
