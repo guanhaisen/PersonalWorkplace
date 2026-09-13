@@ -92,6 +92,9 @@ export default function App() {
   const [navOrder, setNavOrder] = useState<ViewKey[]>(loadNavOrder)
   const [navDrag, setNavDrag] = useState<ViewKey | null>(null)
   const [navDropTarget, setNavDropTarget] = useState<{ key: ViewKey; pos: 'before' | 'after' } | null>(null)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => localStorage.getItem('sidebar.collapsed') === '1',
+  )
   const [dragPanel, setDragPanel] = useState<PanelId | null>(null)
   const [dropTarget, setDropTarget] = useState<PanelId | null>(null)
   const importFileRef = useRef<HTMLInputElement>(null)
@@ -105,6 +108,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(NAV_KEY, JSON.stringify(navOrder))
   }, [navOrder])
+
+  useEffect(() => {
+    localStorage.setItem('sidebar.collapsed', sidebarCollapsed ? '1' : '0')
+  }, [sidebarCollapsed])
 
   // 严格 2×3:拖拽即互换两张卡片
   const swapPanels = (a: PanelId, b: PanelId) =>
@@ -327,7 +334,14 @@ export default function App() {
   // 保证番茄钟计时等组件内部状态跨视图保留
   return (
     <div className="shell">
-      <aside className="sidebar">
+      <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
+        <button
+          className="collapse-btn"
+          onClick={() => setSidebarCollapsed((v) => !v)}
+          title={sidebarCollapsed ? '展开导航' : '收起导航'}
+        >
+          {sidebarCollapsed ? '›' : '‹'}
+        </button>
         <div className="brand">
           <BrandMark />
           <div>
@@ -349,7 +363,7 @@ export default function App() {
                 }`}
                 draggable
                 onClick={() => setView(key)}
-                title="点击切换,拖动调整顺序"
+                title={`${meta.label} · 点击切换,拖动排序`}
                 onDragStart={(e) => {
                   setNavDrag(key)
                   e.dataTransfer.effectAllowed = 'move'
@@ -389,11 +403,13 @@ export default function App() {
         <div className="sidebar-foot">
           <div className="save-line">
             <span className={`pulse ${saveState === 'error' ? 'err' : ''}`} />
-            {saveState === 'saving'
-              ? '保存中…'
-              : saveState === 'error'
-                ? '保存失败 · 将重试'
-                : '已保存'}
+            <span className="save-text">
+              {saveState === 'saving'
+                ? '保存中…'
+                : saveState === 'error'
+                  ? '保存失败 · 将重试'
+                  : '已保存'}
+            </span>
           </div>
           <div className="sf">
             <span>LOCAL</span>
