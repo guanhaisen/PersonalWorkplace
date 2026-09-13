@@ -19,61 +19,34 @@ export type UpdateFn = <K extends CollectionKey>(
 
 type ViewKey = 'overview' | 'todos' | 'notes' | 'focus' | 'habits'
 
-// ---------- 总览自由布局:行结构,每行内卡片均分宽度 ----------
+// ---------- 总览布局:严格两行三列,拖拽互换 ----------
 
 type PanelId = 'todo' | 'notes' | 'cal' | 'pomo' | 'hab' | 'keys'
 type Rows = PanelId[][]
 
 const PANEL_IDS: PanelId[] = ['todo', 'notes', 'cal', 'pomo', 'hab', 'keys']
-const LAYOUT_KEY = 'overview.layout.v2'
+const LAYOUT_KEY = 'overview.layout.v3'
 
-const DEFAULT_ROWS: Rows = [
-  ['todo', 'notes', 'pomo'],
-  ['cal', 'hab', 'keys'],
-]
+const DEFAULT_SLOTS: PanelId[] = ['todo', 'notes', 'pomo', 'cal', 'hab', 'keys']
 
-function loadRows(): Rows {
-  const packBySpans = (order: PanelId[], spans: Record<string, number>): Rows => {
-    const rows: Rows = []
-    let cur: PanelId[] = []
-    let width = 0
-    for (const id of order) {
-      const s = Math.min(12, Math.max(1, Number(spans[id]) || 4))
-      if (width + s > 12 && cur.length) {
-        rows.push(cur)
-        cur = []
-        width = 0
-      }
-      cur.push(id)
-      width += s
-    }
-    if (cur.length) rows.push(cur)
-    return rows
-  }
+function loadSlots(): PanelId[] {
   try {
-    const v2 = localStorage.getItem(LAYOUT_KEY)
-    if (v2) {
-      const parsed = JSON.parse(v2)
-      if (Array.isArray(parsed) && parsed.every((r) => Array.isArray(r))) {
-        const rows = (parsed as Rows)
-          .map((r) => r.filter((id) => PANEL_IDS.includes(id)))
-          .filter((r) => r.length > 0)
-        for (const id of PANEL_IDS) {
-          if (!rows.some((r) => r.includes(id))) rows.push([id])
-        }
-        return rows
-      }
-    }
-    // 旧版(扁平顺序 + 跨列数)迁移
-    const v1raw = localStorage.getItem('overview.layout.v1')
-    if (v1raw) {
-      const v1 = JSON.parse(v1raw)
-      if (Array.isArray(v1?.order)) return packBySpans(v1.order, v1.spans ?? {})
+    for (const key of [LAYOUT_KEY, 'overview.layout.v2']) {
+      const raw = localStorage.getItem(key)
+      if (!raw) continue
+      const parsed = JSON.parse(raw)
+      // v3 是六元素槽位数组;v2 是行数组,拍平兼容
+      const flat = Array.isArray(parsed) && Array.isArray(parsed[0]) ? parsed.flat() : parsed
+      if (!Array.isArray(flat)) continue
+      const ids = flat.filter(
+        (id: PanelId, i: number) => PANEL_IDS.includes(id) && flat.indexOf(id) === i,
+      )
+      if (ids.length === PANEL_IDS.length) return ids as PanelId[]
     }
   } catch {
     // 忽略损坏的存档
   }
-  return DEFAULT_ROWS.map((r) => [...r])
+  return [...DEFAULT_SLOTS]
 }
 
 const NAV_ITEMS: { key: ViewKey; label: string; icon: JSX.Element }[] = [
@@ -93,51 +66,22 @@ export default function App() {
   const [saveState, setSaveState] = useState<SaveState>('idle')
   const [view, setView] = useState<ViewKey>('overview')
   const [paletteOpen, setPaletteOpen] = useState(false)
-  const [rows, setRows] = useState<Rows>(loadRows)
+  const [slots, setSlots] = useState<PanelId[]>(loadSlots)
   const [dragPanel, setDragPanel] = useState<PanelId | null>(null)
-  const [dropTarget, setDropTarget] = useState<{ id: PanelId; pos: 'before' | 'after' } | null>(null)
+  const [dropTarget, setDropTarget] = useState<PanelId | null>(null)
   const importFileRef = useRef<HTMLInputElement>(null)
   const dataRef = useRef<AppData | null>(null)
 
   // 布局持久化
   useEffect(() => {
-    localStorage.setItem(LAYOUT_KEY, JSON.stringify(rows))
-  }, [rows])
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify(slots))
+  }, [slots])
 
-  const movePanel = (src: PanelId, dst: PanelId, pos: 'before' | 'after') => {
-    if (src === dst) return
-    setRows((prev) => {
-      const next = prev.map((r) => [...r])
-      for (const r of next) {
-        const i = r.indexOf(src)
-        if (i >= 0) r.splice(i, 1)
-      }
-      const pruned = next.filter((r) => r.length > 0)
-      for (const r of pruned) {
-        const i = r.indexOf(dst)
-        if (i >= 0) {
-          r.splice(pos === 'before' ? i : i + 1, 0, src)
-          return pruned
-        }
-      }
-      pruned.push([src])
-      return pruned
-    })
-  }
+  // 严格 2×3:拖拽即互换两张卡片
+  const swapPanels = (a: PanelId, b: PanelId) =>
+    setSlots((prev) => prev.map((id) => (id === a ? b : id === b ? a : id)))
 
-  const appendRow = (src: PanelId) =>
-    setRows((prev) => {
-      const next = prev.map((r) => [...r])
-      for (const r of next) {
-        const i = r.indexOf(src)
-        if (i >= 0) r.splice(i, 1)
-      }
-      const pruned = next.filter((r) => r.length > 0)
-      pruned.push([src])
-      return pruned
-    })
-
-  const resetLayout = () => setRows(DEFAULT_ROWS.map((r) => [...r]))
+  const resetLayout = () => setSlots([...DEFAULT_SLOTS])
   dataRef.current = data
   const timers = useRef<Partial<Record<CollectionKey, ReturnType<typeof setTimeout>>>>({})
 
@@ -439,14 +383,13 @@ export default function App() {
             hab: <HabitsPanel habits={data.habits} update={update} />,
             keys: <ShortcutsPanel onOpenPalette={() => setPaletteOpen(true)} />,
           }
-          // 各视图的行结构;总览由用户布局决定,其余面板保持挂载(隐藏),状态不丢
+          // 各视图的行结构;总览固定两行三列(槽位由用户互换),其余面板保持挂载(隐藏)
+          const overviewRows: Rows = [slots.slice(0, 3), slots.slice(3, 6)]
           const VIEW_ROWS: Record<ViewKey, Rows> = {
-            overview: rows,
+            overview: overviewRows,
             todos: [['todo']],
             notes: [['notes']],
-            focus: [
-              ['pomo', 'cal'],
-            ],
+            focus: [['pomo', 'cal']],
             habits: [['hab']],
           }
           const viewRows = VIEW_ROWS[view]
@@ -455,7 +398,7 @@ export default function App() {
 
           const cellOf = (id: PanelId) => {
             const isDragging = dragPanel === id
-            const isTarget = !!dropTarget && dropTarget.id === id && dragPanel !== null && dragPanel !== id
+            const isTarget = !!dropTarget && dropTarget === id && dragPanel !== null && dragPanel !== id
             return (
               <div
                 key={id}
@@ -464,18 +407,16 @@ export default function App() {
                   if (!dragPanel || dragPanel === id) return
                   e.preventDefault()
                   e.dataTransfer.dropEffect = 'move'
-                  const rect = e.currentTarget.getBoundingClientRect()
-                  const pos = e.clientX < rect.left + rect.width / 2 ? 'before' : 'after'
-                  if (dropTarget?.id !== id || dropTarget.pos !== pos) setDropTarget({ id, pos })
+                  if (dropTarget !== id) setDropTarget(id)
                 }}
                 onDrop={(e) => {
                   e.preventDefault()
-                  if (dragPanel && dropTarget?.id === id) movePanel(dragPanel, id, dropTarget.pos)
+                  if (dragPanel && dropTarget) swapPanels(dragPanel, dropTarget)
                   setDragPanel(null)
                   setDropTarget(null)
                 }}
                 onDragLeave={(e) => {
-                  if (e.target === e.currentTarget && dropTarget?.id === id) setDropTarget(null)
+                  if (e.target === e.currentTarget && dropTarget === id) setDropTarget(null)
                 }}
               >
                 <div className="layout-tools">
@@ -491,7 +432,7 @@ export default function App() {
                       setDragPanel(null)
                       setDropTarget(null)
                     }}
-                    title="拖动调整位置"
+                    title="拖到其他卡片上互换位置"
                   >
                     <IconGrip />
                   </button>
@@ -513,20 +454,6 @@ export default function App() {
                 </div>
               ))}
               {hidden.length > 0 && <div style={{ display: 'none' }}>{hidden.map((id) => cellOf(id))}</div>}
-              {dragPanel && (
-                <div
-                  className="board-newrow"
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={(e) => {
-                    e.preventDefault()
-                    if (dragPanel) appendRow(dragPanel)
-                    setDragPanel(null)
-                    setDropTarget(null)
-                  }}
-                >
-                  拖到这里单独成行
-                </div>
-              )}
             </div>
           )
         })()}
