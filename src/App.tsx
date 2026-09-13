@@ -641,11 +641,6 @@ export default function App() {
           <LinksBar links={data.links} update={update} />
 
           <div className="top-right">
-            {view === 'overview' && (
-              <button className="kbd-hint" onClick={resetLayout} title="恢复默认布局">
-                重置布局
-              </button>
-            )}
             <button
               className="kbd-hint"
               onClick={() => setStartPageOpen(true)}
@@ -653,6 +648,11 @@ export default function App() {
             >
               设为开始页
             </button>
+            {view === 'overview' && (
+              <button className="kbd-hint" onClick={resetLayout} title="恢复默认布局">
+                重置布局
+              </button>
+            )}
             <button
               className="kbd-hint"
               onClick={() => setPaletteOpen(true)}
