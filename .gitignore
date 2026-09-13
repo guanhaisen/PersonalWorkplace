@@ -1,0 +1,4 @@
+node_modules/
+dist/
+.zcode/
+data/*.tmp
