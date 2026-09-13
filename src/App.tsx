@@ -49,13 +49,35 @@ function loadSlots(): PanelId[] {
   return [...DEFAULT_SLOTS]
 }
 
-const NAV_ITEMS: { key: ViewKey; label: string; icon: JSX.Element }[] = [
-  { key: 'overview', label: '总览', icon: <IconOverview /> },
-  { key: 'todos', label: '待办', icon: <IconTodo /> },
-  { key: 'notes', label: '笔记', icon: <IconNote /> },
-  { key: 'focus', label: '专注', icon: <IconTimer /> },
-  { key: 'habits', label: '习惯', icon: <IconHabit /> },
-]
+const NAV_META: Record<ViewKey, { label: string; icon: JSX.Element }> = {
+  overview: { label: '总览', icon: <IconOverview /> },
+  todos: { label: '待办', icon: <IconTodo /> },
+  notes: { label: '笔记', icon: <IconNote /> },
+  focus: { label: '专注', icon: <IconTimer /> },
+  habits: { label: '习惯', icon: <IconHabit /> },
+}
+
+// 导航顺序可自由调整(拖拽),数字快捷键跟随位置
+const NAV_KEY = 'nav.order.v1'
+const DEFAULT_NAV: ViewKey[] = ['overview', 'todos', 'notes', 'focus', 'habits']
+
+function loadNavOrder(): ViewKey[] {
+  try {
+    const raw = localStorage.getItem(NAV_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) {
+        const ids = parsed.filter(
+          (id: ViewKey, i: number) => DEFAULT_NAV.includes(id) && parsed.indexOf(id) === i,
+        )
+        if (ids.length === DEFAULT_NAV.length) return ids as ViewKey[]
+      }
+    }
+  } catch {
+    // 忽略损坏的存档
+  }
+  return [...DEFAULT_NAV]
+}
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
 const WEEKDAYS_EN = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT']
@@ -67,6 +89,9 @@ export default function App() {
   const [view, setView] = useState<ViewKey>('overview')
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [slots, setSlots] = useState<PanelId[]>(loadSlots)
+  const [navOrder, setNavOrder] = useState<ViewKey[]>(loadNavOrder)
+  const [navDrag, setNavDrag] = useState<ViewKey | null>(null)
+  const [navDropTarget, setNavDropTarget] = useState<{ key: ViewKey; pos: 'before' | 'after' } | null>(null)
   const [dragPanel, setDragPanel] = useState<PanelId | null>(null)
   const [dropTarget, setDropTarget] = useState<PanelId | null>(null)
   const importFileRef = useRef<HTMLInputElement>(null)
@@ -77,11 +102,29 @@ export default function App() {
     localStorage.setItem(LAYOUT_KEY, JSON.stringify(slots))
   }, [slots])
 
+  useEffect(() => {
+    localStorage.setItem(NAV_KEY, JSON.stringify(navOrder))
+  }, [navOrder])
+
   // 严格 2×3:拖拽即互换两张卡片
   const swapPanels = (a: PanelId, b: PanelId) =>
     setSlots((prev) => prev.map((id) => (id === a ? b : id === b ? a : id)))
 
-  const resetLayout = () => setSlots([...DEFAULT_SLOTS])
+  // 导航排序:src 插到 dst 前/后
+  const moveNavItem = (src: ViewKey, dst: ViewKey, pos: 'before' | 'after') => {
+    if (src === dst) return
+    setNavOrder((prev) => {
+      const next = prev.filter((id) => id !== src)
+      const i = next.indexOf(dst)
+      next.splice(pos === 'before' ? i : i + 1, 0, src)
+      return next
+    })
+  }
+
+  const resetLayout = () => {
+    setSlots([...DEFAULT_SLOTS])
+    setNavOrder([...DEFAULT_NAV])
+  }
   dataRef.current = data
   const timers = useRef<Partial<Record<CollectionKey, ReturnType<typeof setTimeout>>>>({})
 
@@ -186,22 +229,13 @@ export default function App() {
         return
       }
       if (typing || paletteOpen || e.repeat || e.metaKey || e.ctrlKey || e.altKey) return
+      // 数字键按导航顺序切换视图
+      const digit = Number(e.key)
+      if (digit >= 1 && digit <= navOrder.length) {
+        setView(navOrder[digit - 1])
+        return
+      }
       switch (e.key) {
-        case '1':
-          setView('overview')
-          break
-        case '2':
-          setView('todos')
-          break
-        case '3':
-          setView('notes')
-          break
-        case '4':
-          setView('focus')
-          break
-        case '5':
-          setView('habits')
-          break
         case 'n':
           setView('notes')
           emit('workbench:new-note')
@@ -225,12 +259,12 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [paletteOpen])
+  }, [paletteOpen, navOrder])
 
   const commands: Command[] = [
-    ...NAV_ITEMS.map(({ key, label }, i) => ({
+    ...navOrder.map((key, i) => ({
       id: `view-${key}`,
-      label: `前往「${label}」`,
+      label: `前往「${NAV_META[key].label}」`,
       hint: String(i + 1),
       run: () => setView(key),
     })),
@@ -302,17 +336,53 @@ export default function App() {
         </div>
 
         <nav className="nav">
-          {NAV_ITEMS.map(({ key, label, icon }, i) => (
-            <button
-              key={key}
-              className={`nav-item ${view === key ? 'active' : ''}`}
-              onClick={() => setView(key)}
-            >
-              {icon}
-              <span className="no">{String(i + 1).padStart(2, '0')}</span>
-              <span className="lab">{label}</span>
-            </button>
-          ))}
+          {navOrder.map((key, i) => {
+            const meta = NAV_META[key]
+            const isDragging = navDrag === key
+            const isTarget = !!navDropTarget && navDropTarget.key === key && navDrag !== null && navDrag !== key
+            return (
+              <button
+                key={key}
+                className={`nav-item ${view === key ? 'active' : ''} ${isDragging ? 'dragging' : ''} ${
+                  isTarget ? `drop-${navDropTarget!.pos}` : ''
+                }`}
+                draggable
+                onClick={() => setView(key)}
+                title="点击切换,拖动调整顺序"
+                onDragStart={(e) => {
+                  setNavDrag(key)
+                  e.dataTransfer.effectAllowed = 'move'
+                  e.dataTransfer.setData('text/plain', key)
+                }}
+                onDragEnd={() => {
+                  setNavDrag(null)
+                  setNavDropTarget(null)
+                }}
+                onDragOver={(e) => {
+                  if (!navDrag || navDrag === key) return
+                  e.preventDefault()
+                  e.dataTransfer.dropEffect = 'move'
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  const pos = e.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+                  if (navDropTarget?.key !== key || navDropTarget.pos !== pos)
+                    setNavDropTarget({ key, pos })
+                }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  if (navDrag && navDropTarget) moveNavItem(navDrag, navDropTarget.key, navDropTarget.pos)
+                  setNavDrag(null)
+                  setNavDropTarget(null)
+                }}
+                onDragLeave={(e) => {
+                  if (e.target === e.currentTarget && navDropTarget?.key === key) setNavDropTarget(null)
+                }}
+              >
+                {meta.icon}
+                <span className="no">{String(i + 1).padStart(2, '0')}</span>
+                <span className="lab">{meta.label}</span>
+              </button>
+            )
+          })}
         </nav>
 
         <div className="sidebar-foot">

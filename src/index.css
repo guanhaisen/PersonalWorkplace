@@ -129,7 +129,24 @@ textarea::placeholder {
   color: var(--muted);
   font-size: 14px;
   text-align: left;
+  cursor: grab;
   transition: background 0.18s ease, color 0.18s ease;
+}
+
+.nav-item:active {
+  cursor: grabbing;
+}
+
+.nav-item.dragging {
+  opacity: 0.4;
+}
+
+.nav-item.drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.nav-item.drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 .nav-item svg {
