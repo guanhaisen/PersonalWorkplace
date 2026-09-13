@@ -54,21 +54,69 @@ export default function App() {
     load()
   }, [load])
 
-  // 整集合更新:先改本地状态,再防抖 400ms 后整体保存到后端
-  const update = useCallback<UpdateFn>((key, updater) => {
-    setData((prev) => (prev ? { ...prev, [key]: updater(prev[key]) } : prev))
-    setSaveState('saving')
-    clearTimeout(timers.current[key])
-    timers.current[key] = setTimeout(async () => {
+  // 整集合更新:先改本地状态,再防抖 400ms 后整体保存到后端。
+  // 保存失败进入重试队列(指数退避,窗口聚焦/联网时立即重试),
+  // 关闭页面前若有未落盘的变更,用 sendBeacon 兜底发出。
+  const failedKeys = useRef<Set<CollectionKey>>(new Set())
+  const retryTimers = useRef<Partial<Record<CollectionKey, ReturnType<typeof setTimeout>>>>({})
+  const retryCount = useRef<Partial<Record<CollectionKey, number>>>({})
+
+  const flush = useCallback(async (key: CollectionKey) => {
+    const current = dataRef.current
+    if (!current) return
+    try {
+      await saveCollection(key, current[key])
+      failedKeys.current.delete(key)
+      retryCount.current[key] = 0
+      setSaveState(failedKeys.current.size ? 'error' : 'saved')
+    } catch {
+      failedKeys.current.add(key)
+      const delays = [2000, 4000, 8000, 15000, 30000]
+      const n = retryCount.current[key] ?? 0
+      retryCount.current[key] = n + 1
+      clearTimeout(retryTimers.current[key])
+      retryTimers.current[key] = setTimeout(() => flush(key), delays[Math.min(n, delays.length - 1)])
+      setSaveState('error')
+    }
+  }, [])
+
+  const update = useCallback<UpdateFn>(
+    (key, updater) => {
+      setData((prev) => (prev ? { ...prev, [key]: updater(prev[key]) } : prev))
+      setSaveState('saving')
+      clearTimeout(timers.current[key])
+      timers.current[key] = setTimeout(() => flush(key), 400)
+    },
+    [flush],
+  )
+
+  // 有失败队列时:窗口重新聚焦 / 网络恢复 → 立即重试
+  useEffect(() => {
+    const retryNow = () => {
+      for (const key of failedKeys.current) flush(key)
+    }
+    window.addEventListener('online', retryNow)
+    window.addEventListener('focus', retryNow)
+    return () => {
+      window.removeEventListener('online', retryNow)
+      window.removeEventListener('focus', retryNow)
+    }
+  }, [flush])
+
+  // 关页兜底:把还没保存成功的集合用 sendBeacon 发出
+  useEffect(() => {
+    const onBeforeUnload = () => {
       const current = dataRef.current
       if (!current) return
-      try {
-        await saveCollection(key, current[key])
-        setSaveState('saved')
-      } catch {
-        setSaveState('error')
+      for (const key of failedKeys.current) {
+        navigator.sendBeacon?.(
+          `/api/${key}`,
+          new Blob([JSON.stringify(current[key])], { type: 'application/json' }),
+        )
       }
-    }, 400)
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
   }, [])
 
   const handleExport = () => {
@@ -226,7 +274,11 @@ export default function App() {
         <div className="sidebar-foot">
           <div className="save-line">
             <span className={`pulse ${saveState === 'error' ? 'err' : ''}`} />
-            {saveState === 'saving' ? '保存中…' : saveState === 'error' ? '保存失败' : '已保存'}
+            {saveState === 'saving'
+              ? '保存中…'
+              : saveState === 'error'
+                ? '保存失败 · 将重试'
+                : '已保存'}
           </div>
           <div className="sf">
             <span>LOCAL</span>

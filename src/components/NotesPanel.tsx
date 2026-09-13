@@ -27,11 +27,13 @@ function AutoTextarea({
   onChange,
   placeholder,
   autoFocus,
+  onBlur,
 }: {
   value: string
   onChange: (v: string) => void
   placeholder?: string
   autoFocus?: boolean
+  onBlur?: () => void
 }) {
   const ref = useRef<HTMLTextAreaElement>(null)
   useEffect(() => {
@@ -47,6 +49,7 @@ function AutoTextarea({
       value={value}
       placeholder={placeholder}
       autoFocus={autoFocus}
+      onBlur={onBlur}
       onChange={(e) => onChange(e.target.value)}
     />
   )
@@ -56,6 +59,13 @@ export default function NotesPanel({ notes, update }: Props) {
   const [query, setQuery] = useState('')
   const [newId, setNewId] = useState<string | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
+  const [, setTick] = useState(0)
+
+  // 相对时间戳每 30 秒自动刷新
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 30_000)
+    return () => clearInterval(t)
+  }, [])
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -131,6 +141,10 @@ export default function NotesPanel({ notes, update }: Props) {
               onChange={(v) => change(n.id, v)}
               placeholder="记录点什么…"
               autoFocus={n.id === newId}
+              onBlur={() => {
+                // 失焦时空笔记自动清理
+                if (!n.content.trim()) remove(n.id)
+              }}
             />
             <div className="note-foot">
               <span className="note-time">{relativeTime(n.updatedAt)}</span>
