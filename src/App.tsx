@@ -121,6 +121,138 @@ export default function App() {
   const [dropTarget, setDropTarget] = useState<PanelId | null>(null)
   // 手机端总览:当前展开的胶囊对应卡片;null = 全部收起
   const [openCapsule, setOpenCapsule] = useState<PanelId | null>(null)
+
+  // 手机端胶囊长按拖动排序:长按约 400ms 进入拖动,松手提交新顺序;
+  // 未满阈值松手是普通点击(展开/收起)。拖动全程只改 transform,落点一次提交。
+  const capDrag = useRef<{
+    id: PanelId
+    fromIndex: number
+    targetIndex: number
+    startX: number
+    startY: number
+    active: boolean
+    press: HTMLButtonElement
+    pointerId: number
+    cells: HTMLElement[] | null
+    rects: DOMRect[] | null
+    step: number
+  } | null>(null)
+  const capPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const capSuppressClick = useRef(false)
+
+  // 拖动激活后拦截触摸滚动(长按前不拦,保证列表可正常滑动)
+  useEffect(() => {
+    const block = (e: TouchEvent) => {
+      if (capDrag.current?.active) e.preventDefault()
+    }
+    document.addEventListener('touchmove', block, { passive: false })
+    return () => document.removeEventListener('touchmove', block)
+  }, [])
+
+  const measureCapsules = (d: NonNullable<typeof capDrag.current>) => {
+    const cells = Array.from(document.querySelectorAll<HTMLElement>('.board .cell.has-cap'))
+    const rects = cells.map((c) => c.getBoundingClientRect())
+    d.cells = cells
+    d.rects = rects
+    d.step = rects.length > 1 ? rects[1].top - rects[0].top : 0
+    d.fromIndex = cells.findIndex((c) => c.classList.contains(`cell-${d.id}`))
+    d.targetIndex = d.fromIndex
+  }
+
+  const onCapsulePress = (id: PanelId, e: React.PointerEvent<HTMLButtonElement>) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    const press = e.currentTarget
+    const pointerId = e.pointerId
+    const startX = e.clientX
+    const startY = e.clientY
+    capSuppressClick.current = false
+    capDrag.current = {
+      id,
+      fromIndex: 0,
+      targetIndex: 0,
+      startX,
+      startY,
+      active: false,
+      press,
+      pointerId,
+      cells: null,
+      rects: null,
+      step: 0,
+    }
+    clearTimeout(capPressTimer.current!)
+    capPressTimer.current = setTimeout(() => {
+      const d = capDrag.current
+      if (!d || d.press !== press) return
+      d.active = true
+      try {
+        press.setPointerCapture(d.pointerId)
+      } catch {
+        // 指针可能已释放,交给 pointercancel 清理
+      }
+      press.closest<HTMLElement>('.cell')?.classList.add('cap-dragging')
+      navigator.vibrate?.(15)
+      setOpenCapsule(null) // 收起展开中的卡片,保证各行等高便于计算
+    }, 380)
+  }
+
+  const onCapsulePointerMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    const d = capDrag.current
+    if (!d || e.pointerId !== d.pointerId) return
+    if (!d.active) {
+      // 长按生效前的大幅移动是滚动手势,取消长按
+      if (Math.hypot(e.clientX - d.startX, e.clientY - d.startY) > 10) {
+        clearTimeout(capPressTimer.current!)
+        capDrag.current = null
+      }
+      return
+    }
+    if (!d.rects) measureCapsules(d) // 首次移动时测量,确保收起重渲染已完成
+    if (!d.rects || !d.cells || !d.cells.length || d.step <= 0) return
+    const from = Math.max(d.fromIndex, 0)
+    const h = d.rects[0].height
+    const minDy = d.rects[0].top - d.rects[from].top
+    const maxDy = d.rects[d.rects.length - 1].top - d.rects[from].top
+    const dy = Math.min(Math.max(e.clientY - d.startY, minDy), maxDy)
+    d.cells[from]?.style.setProperty('transform', `translateY(${dy}px)`)
+    const center = d.rects[from].top + h / 2 + dy
+    const target = Math.min(
+      Math.max(Math.round((center - d.rects[0].top - h / 2) / d.step), 0),
+      d.cells.length - 1,
+    )
+    if (target !== d.targetIndex) {
+      d.targetIndex = target
+      d.cells.forEach((c, i) => {
+        if (i === from) return
+        let shift = 0
+        if (from < target && i > from && i <= target) shift = -d.step
+        if (from > target && i >= target && i < from) shift = d.step
+        c.style.setProperty('transform', shift ? `translateY(${shift}px)` : '')
+      })
+    }
+  }
+
+  const endCapsuleDrag = () => {
+    clearTimeout(capPressTimer.current!)
+    const d = capDrag.current
+    capDrag.current = null
+    if (!d) return
+    if (!d.active) return // 未进入拖动:交给 onClick 展开卡片
+    capSuppressClick.current = true
+    if (d.targetIndex !== d.fromIndex) {
+      const { fromIndex, targetIndex } = d
+      setSlots((prev) => {
+        const arr = [...prev]
+        const [moved] = arr.splice(fromIndex, 1)
+        arr.splice(targetIndex, 0, moved)
+        return arr
+      })
+    }
+    const cells = d.cells ?? Array.from(document.querySelectorAll<HTMLElement>('.board .cell.has-cap'))
+    cells.forEach((c) => {
+      c.style.removeProperty('transform')
+      c.classList.remove('cap-dragging')
+    })
+  }
   const importFileRef = useRef<HTMLInputElement>(null)
   const dataRef = useRef<AppData | null>(null)
 
@@ -757,7 +889,17 @@ export default function App() {
                     type="button"
                     className="capsule-head"
                     aria-expanded={capOpen}
-                    onClick={() => setOpenCapsule(capOpen ? null : id)}
+                    onPointerDown={(e) => onCapsulePress(id, e)}
+                    onPointerMove={onCapsulePointerMove}
+                    onPointerUp={endCapsuleDrag}
+                    onPointerCancel={endCapsuleDrag}
+                    onClick={() => {
+                      if (capSuppressClick.current) {
+                        capSuppressClick.current = false
+                        return
+                      }
+                      setOpenCapsule(capOpen ? null : id)
+                    }}
                   >
                     {CAPSULE_META[id].icon}
                     <span>{CAPSULE_META[id].label}</span>

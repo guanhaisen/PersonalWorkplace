@@ -2965,3 +2965,26 @@ kbd {
     display: none;
   }
 }
+
+/* 胶囊长按拖动:被拖项悬浮跟随,其余项平滑让位 */
+@media (max-width: 640px) {
+  .cell.has-cap {
+    transition: transform 0.16s ease;
+  }
+
+  .cell.has-cap.cap-dragging {
+    z-index: 5;
+    transition: none;
+  }
+
+  .cell.has-cap.cap-dragging > .capsule-head {
+    border-color: var(--accent);
+    box-shadow: 0 14px 30px rgba(16, 24, 40, 0.18);
+  }
+
+  .cell.has-cap > .capsule-head {
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
+}
