@@ -69,27 +69,24 @@ export default function HabitsPanel({ habits, update }: Props) {
         <span className="p-meta">最近 7 天</span>
       </header>
 
-      <div className="dots-h">
+      <div className="habit-grid habit-head">
+        <span />
         {last7.map((d) => (
-          <span key={d.date} className={d.date === today ? 'today' : ''}>
+          <span key={d.date} className={`hd ${d.date === today ? 'today' : ''}`}>
             {d.label}
           </span>
         ))}
-        <span className="dots-h-pad" />
+        <span className="hs">连续</span>
       </div>
 
-      {habits.map((h) => (
-        <div key={h.id} className="hab">
-          <div className="hab-l">
-            <div className="hab-top">
+      <div className="habit-list">
+        {habits.map((h) => {
+          const s = streak(h.records)
+          return (
+            <div key={h.id} className="habit-line">
               <span className="name" title={h.name}>
                 {h.name}
               </span>
-              <span className="streak">
-                连续 <b>🔥{streak(h.records)}</b>
-              </span>
-            </div>
-            <div className="dots">
               {last7.map((d) => (
                 <button
                   key={d.date}
@@ -98,19 +95,17 @@ export default function HabitsPanel({ habits, update }: Props) {
                   onClick={() => toggle(h.id, d.date)}
                 />
               ))}
-              <span className="dots-pad">
-                <button className="icon-btn del" title="删除" onClick={() => remove(h.id)}>
-                  ✕
-                </button>
-              </span>
+              <span className="streak">{s > 0 ? <><b>{s}</b> 天</> : '—'}</span>
+              <button className="habit-del" title="删除" onClick={() => remove(h.id)}>
+                ✕
+              </button>
             </div>
-          </div>
-        </div>
-      ))}
-
-      {habits.length === 0 && (
-        <div className="empty-hint">还没有习惯,添加一个开始打卡,比如「读书 30 分钟」。</div>
-      )}
+          )
+        })}
+        {habits.length === 0 && (
+          <div className="empty-hint">还没有习惯,添加一个开始打卡,比如「读书 30 分钟」。</div>
+        )}
+      </div>
 
       <div className="add-sm">
         <input
