@@ -2988,3 +2988,14 @@ kbd {
     -webkit-touch-callout: none;
   }
 }
+
+/* GitHub 仓库图标链接(kbd-hint 同款外观,图标居中) */
+.kbd-hint.gh-repo {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 6px;
+}
+
+.kbd-hint.gh-repo:hover {
+  color: var(--accent);
+}

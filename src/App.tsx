@@ -11,7 +11,7 @@ import AiPanel from './components/AiPanel'
 import ReportPanel from './components/ReportPanel'
 import LinksBar from './components/LinksBar'
 import StartPageModal from './components/StartPageModal'
-import { BrandMark, IconAi, IconCalendar, IconGrip, IconHabit, IconKeys, IconNote, IconOverview, IconReport, IconTimer, IconTodo } from './components/icons'
+import { BrandMark, IconAi, IconCalendar, IconGitHub, IconGrip, IconHabit, IconKeys, IconNote, IconOverview, IconReport, IconTimer, IconTodo } from './components/icons'
 import CommandPalette, { type Command } from './components/CommandPalette'
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
@@ -103,6 +103,7 @@ function loadNavOrder(): ViewKey[] {
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
 const WEEKDAYS_EN = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT']
+const GITHUB_REPO = 'https://github.com/guanhaisen/PersonalWorkplace'
 
 export default function App() {
   const [data, setData] = useState<AppData | null>(null)
@@ -810,6 +811,15 @@ export default function App() {
             >
               ⌘K
             </button>
+            <a
+              className="kbd-hint gh-repo"
+              href={GITHUB_REPO}
+              target="_blank"
+              rel="noreferrer"
+              title="GitHub 仓库"
+            >
+              <IconGitHub />
+            </a>
             <span className="cm">{dateComment}</span>
           </div>
         </header>
