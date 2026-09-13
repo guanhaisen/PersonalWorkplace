@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import type { Habit } from '../types'
 import { todayStr, uid } from '../api'
 import type { UpdateFn } from '../App'
+import { IconCheck } from './icons'
 
 interface Props {
   habits: Habit[]
@@ -70,7 +71,7 @@ export default function HabitsPanel({ habits, update }: Props) {
       </header>
 
       <div className="habit-grid habit-head">
-        <span />
+        <span className="hlabel">今</span>
         {last7.map((d) => (
           <span key={d.date} className={`hd ${d.date === today ? 'today' : ''}`}>
             {d.label}
@@ -82,8 +83,16 @@ export default function HabitsPanel({ habits, update }: Props) {
       <div className="habit-list">
         {habits.map((h) => {
           const s = streak(h.records)
+          const doneToday = !!h.records[today]
           return (
             <div key={h.id} className="habit-line">
+              <button
+                className={`today-cb ${doneToday ? 'on' : ''}`}
+                title={doneToday ? '取消今天打卡' : '打卡今天'}
+                onClick={() => toggle(h.id, today)}
+              >
+                {doneToday && <IconCheck />}
+              </button>
               <span className="name" title={h.name}>
                 {h.name}
               </span>
