@@ -50,6 +50,42 @@ body {
   color: var(--accent-deep);
 }
 
+/* ---------- 细滚动条:纸面编辑部风格 ---------- */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cdd3cd transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d3d8d2;
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #aeb6b0;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-button {
+  display: none;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 button {
   font-family: inherit;
   cursor: pointer;
