@@ -8,7 +8,7 @@ const SHORTCUTS: { keys: string; label: string }[] = [
   { keys: 'N', label: '新建笔记' },
   { keys: 'T', label: '新建待办' },
   { keys: '/', label: '搜索笔记' },
-  { keys: 'P', label: '番茄钟 开始/暂停' },
+  { keys: 'P', label: '跳转专注 · 开始/暂停' },
 ]
 
 export default function ShortcutsPanel({ onOpenPalette }: Props) {

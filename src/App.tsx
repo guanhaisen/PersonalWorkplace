@@ -250,6 +250,7 @@ export default function App() {
           emit('workbench:focus-search')
           break
         case 'p':
+          setView('focus')
           emit('workbench:timer-toggle')
           break
         case '?':
@@ -271,7 +272,7 @@ export default function App() {
     { id: 'new-note', label: '新建笔记', hint: 'N', run: () => { setView('notes'); emit('workbench:new-note') } },
     { id: 'new-todo', label: '新建待办', hint: 'T', run: () => { setView('todos'); emit('workbench:focus-todo-input') } },
     { id: 'search-notes', label: '搜索笔记', hint: '/', run: () => { setView('notes'); emit('workbench:focus-search') } },
-    { id: 'timer-toggle', label: '开始 / 暂停番茄钟', hint: 'P', run: () => emit('workbench:timer-toggle') },
+    { id: 'timer-toggle', label: '开始 / 暂停番茄钟', hint: 'P', run: () => { setView('focus'); emit('workbench:timer-toggle') } },
     { id: 'timer-reset', label: '重置番茄钟', run: () => emit('workbench:timer-reset') },
     { id: 'export', label: '导出全部数据', run: handleExport },
   ]
