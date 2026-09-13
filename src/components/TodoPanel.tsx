@@ -7,7 +7,7 @@ import { IconCheck, IconFlag } from './icons'
 const PRIORITY_LABEL: Record<Priority, string> = { high: '高', mid: '中', low: '低' }
 const PRIORITY_ORDER: Record<Priority, number> = { high: 0, mid: 1, low: 2 }
 
-type Filter = 'active' | 'done' | 'all'
+type Filter = 'active' | 'overdue' | 'done' | 'all'
 
 interface Props {
   todos: Todo[]
@@ -35,16 +35,34 @@ export default function TodoPanel({ todos, update }: Props) {
   const today = todayStr()
 
   const visible = useMemo(() => {
-    const filtered = todos.filter((t) =>
-      filter === 'all' ? true : filter === 'done' ? t.done : !t.done,
-    )
+    const filtered = todos.filter((t) => {
+      switch (filter) {
+        case 'done':
+          return t.done
+        case 'overdue':
+          return !t.done && !!t.dueDate && t.dueDate < today
+        case 'all':
+          return true
+        default:
+          return !t.done
+      }
+    })
     // 未完成的在前,同组内高优先级在前
     return [...filtered].sort(
       (a, b) => Number(a.done) - Number(b.done) || PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority],
     )
-  }, [todos, filter])
+  }, [todos, filter, today])
 
   const activeCount = todos.filter((t) => !t.done).length
+  const overdueCount = todos.filter((t) => !t.done && !!t.dueDate && t.dueDate < today).length
+  const doneCount = todos.length - activeCount
+
+  // 清空已完成任务
+  const clearDone = () => {
+    if (doneCount === 0) return
+    if (!window.confirm(`清空 ${doneCount} 项已完成任务?`)) return
+    update('todos', (items) => items.filter((t) => !t.done))
+  }
 
   const add = () => {
     const title = text.trim()
@@ -100,7 +118,8 @@ export default function TodoPanel({ todos, update }: Props) {
         {(
           [
             ['active', '进行中', activeCount],
-            ['done', '已完成', todos.length - activeCount],
+            ['overdue', '已过期', overdueCount],
+            ['done', '已完成', doneCount],
             ['all', '全部', todos.length],
           ] as [Filter, string, number][]
         ).map(([f, label, count]) => (
@@ -108,6 +127,11 @@ export default function TodoPanel({ todos, update }: Props) {
             {label} <em>{count}</em>
           </button>
         ))}
+        {doneCount > 0 && (
+          <button className="tab-clear" onClick={clearDone} title="删除全部已完成任务">
+            清空已完成
+          </button>
+        )}
       </div>
 
       <div className="task-list">

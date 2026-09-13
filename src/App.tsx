@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
 import type { AppData } from './types'
 import { loadAll, saveCollection, type CollectionKey } from './api'
 import TodoPanel from './components/TodoPanel'
@@ -33,6 +33,7 @@ export default function App() {
   const [loadError, setLoadError] = useState(false)
   const [saveState, setSaveState] = useState<SaveState>('idle')
   const [view, setView] = useState<ViewKey>('overview')
+  const importFileRef = useRef<HTMLInputElement>(null)
   const dataRef = useRef<AppData | null>(null)
   dataRef.current = data
   const timers = useRef<Partial<Record<CollectionKey, ReturnType<typeof setTimeout>>>>({})
@@ -66,6 +67,38 @@ export default function App() {
       }
     }, 400)
   }, [])
+
+  const handleExport = () => {
+    // 触发浏览器下载(GET /api/export 返回 attachment)
+    window.location.href = '/api/export'
+  }
+
+  const handleImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // 允许重复选择同一文件
+    if (!file) return
+    let payload: unknown
+    try {
+      payload = JSON.parse(await file.text())
+    } catch {
+      window.alert('文件不是有效的 JSON。')
+      return
+    }
+    if (!window.confirm('导入会覆盖当前全部数据(服务端会先备份),确认继续?')) return
+    try {
+      const res = await fetch('/api/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (!res.ok) throw new Error(await res.text())
+      await load()
+      setSaveState('saved')
+    } catch {
+      setSaveState('error')
+      window.alert('导入失败,请检查文件格式。')
+    }
+  }
 
   if (loadError) {
     return (
@@ -123,6 +156,22 @@ export default function App() {
             <em>·</em>
             <span>JSON</span>
           </div>
+          <div className="data-links">
+            <button className="data-link" onClick={handleExport} title="下载全部数据为 JSON">
+              导出
+            </button>
+            <em>·</em>
+            <button className="data-link" onClick={() => importFileRef.current?.click()} title="从 JSON 备份导入(覆盖当前数据)">
+              导入
+            </button>
+          </div>
+          <input
+            ref={importFileRef}
+            type="file"
+            accept="application/json,.json"
+            hidden
+            onChange={handleImportFile}
+          />
         </div>
       </aside>
 

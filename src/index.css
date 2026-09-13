@@ -257,6 +257,31 @@ textarea::placeholder {
   color: #a7b0ab;
 }
 
+.data-links {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+}
+
+.data-links em {
+  font-style: normal;
+  color: #a7b0ab;
+}
+
+.data-link {
+  color: var(--muted);
+  letter-spacing: 0.08em;
+  transition: color 0.18s ease;
+}
+
+.data-link:hover {
+  color: var(--accent);
+}
+
 .content {
   flex: 1;
   min-width: 0;
@@ -701,6 +726,19 @@ textarea::placeholder {
 .tab.active::after {
   transform: scaleX(1);
   background: var(--accent);
+}
+
+.tab-clear {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-3);
+  transition: color 0.18s ease;
+  white-space: nowrap;
+}
+
+.tab-clear:hover {
+  color: var(--red);
 }
 
 .task-list {

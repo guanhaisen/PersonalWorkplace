@@ -13,6 +13,29 @@ const clampMinutes = (n: number) => Math.min(180, Math.max(1, Math.round(n) || 1
 
 const fmt = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
 
+// 计时状态持久化:刷新/误关标签页后可恢复倒计时
+const TIMER_KEY = 'pomodoro.timer'
+
+interface PersistedTimer {
+  mode: 'focus' | 'break'
+  running: boolean
+  endAt?: number // running 时的结束时间戳
+  secondsLeft: number // paused 时的剩余秒数
+}
+
+function saveTimer(s: PersistedTimer) {
+  localStorage.setItem(TIMER_KEY, JSON.stringify(s))
+}
+
+function loadTimer(): PersistedTimer | null {
+  try {
+    const raw = localStorage.getItem(TIMER_KEY)
+    return raw ? (JSON.parse(raw) as PersistedTimer) : null
+  } catch {
+    return null
+  }
+}
+
 export default function PomodoroPanel({ pomodoros, update }: Props) {
   const [focusMin, setFocusMin] = useState(() => Number(localStorage.getItem('pomodoro.focus')) || 25)
   const [breakMin, setBreakMin] = useState(() => Number(localStorage.getItem('pomodoro.break')) || 5)
@@ -23,9 +46,43 @@ export default function PomodoroPanel({ pomodoros, update }: Props) {
   const endAtRef = useRef(0)
   const completedRef = useRef(false)
   const audioRef = useRef<AudioContext | null>(null)
+  const restoredRef = useRef(false)
 
   useEffect(() => localStorage.setItem('pomodoro.focus', String(focusMin)), [focusMin])
   useEffect(() => localStorage.setItem('pomodoro.break', String(breakMin)), [breakMin])
+
+  // 挂载时恢复上次计时:running 则继续倒计时;离开期间已到点则补记一节
+  useEffect(() => {
+    if (restoredRef.current) return
+    restoredRef.current = true
+    const saved = loadTimer()
+    if (!saved) return
+    const focus = Number(localStorage.getItem('pomodoro.focus')) || 25
+    if (saved.running && saved.endAt) {
+      const left = Math.round((saved.endAt - Date.now()) / 1000)
+      if (left > 0) {
+        setMode(saved.mode)
+        setSecondsLeft(left)
+        endAtRef.current = saved.endAt
+        completedRef.current = false
+        setRunning(true)
+        return
+      }
+      if (saved.mode === 'focus') {
+        update('pomodoros', (items) => [
+          ...items,
+          { id: uid(), date: todayStr(), minutes: focus, completedAt: new Date().toISOString() },
+        ])
+      }
+    }
+    // 休息到点或暂停态:回到专注待开始
+    setMode('focus')
+    setSecondsLeft(focus * 60)
+    completedRef.current = false
+    setRunning(false)
+    saveTimer({ mode: 'focus', running: false, secondsLeft: focus * 60 })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // 未运行时,模式或时长变化直接反映到表盘
   useEffect(() => {
@@ -70,12 +127,14 @@ export default function PomodoroPanel({ pomodoros, update }: Props) {
       completedRef.current = false
       endAtRef.current = Date.now() + breakMin * 60 * 1000
       setRunning(true)
+      saveTimer({ mode: 'break', running: true, endAt: endAtRef.current, secondsLeft: breakMin * 60 })
     } else {
       // 休息结束 → 回到专注,等待手动开始
       setMode('focus')
       setSecondsLeft(focusMin * 60)
       completedRef.current = false
       setRunning(false)
+      saveTimer({ mode: 'focus', running: false, secondsLeft: focusMin * 60 })
     }
   }
 
@@ -108,15 +167,20 @@ export default function PomodoroPanel({ pomodoros, update }: Props) {
     endAtRef.current = Date.now() + secondsLeft * 1000
     completedRef.current = false
     setRunning(true)
+    saveTimer({ mode, running: true, endAt: endAtRef.current, secondsLeft })
   }
 
-  const pause = () => setRunning(false)
+  const pause = () => {
+    setRunning(false)
+    saveTimer({ mode, running: false, secondsLeft })
+  }
 
   const reset = () => {
     setRunning(false)
     setMode('focus')
     setSecondsLeft(focusMin * 60)
     completedRef.current = false
+    saveTimer({ mode: 'focus', running: false, secondsLeft: focusMin * 60 })
   }
 
   const total = (mode === 'focus' ? focusMin : breakMin) * 60
