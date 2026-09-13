@@ -196,6 +196,17 @@ export default function PomodoroPanel({ pomodoros, update }: Props) {
     saveTimer({ mode: 'focus', running: false, secondsLeft: focusMin * 60 })
   }
 
+  // 点击表盘标签直接切换专注/休息(停在对应时长,待开始)
+  const switchMode = () => {
+    const next = mode === 'focus' ? 'break' : 'focus'
+    const mins = next === 'focus' ? focusMin : breakMin
+    setRunning(false)
+    setMode(next)
+    setSecondsLeft(mins * 60)
+    completedRef.current = false
+    saveTimer({ mode: next, running: false, secondsLeft: mins * 60 })
+  }
+
   handlersRef.current.toggle = () => (running ? pause() : start())
   handlersRef.current.reset = reset
 
@@ -213,16 +224,19 @@ export default function PomodoroPanel({ pomodoros, update }: Props) {
           <span className="tag">TIMER</span>
           <i>/</i>番茄钟
         </h2>
-        <span className="badge">
-          今日 {todaySessions.length} 个 · {todayMinutes} 分钟
-        </span>
       </header>
 
       <div className="dial-wrap">
         <div className="dial">
           <TickDial progress={progress} />
           <div className="dial-center">
-            <span className={`mode ${mode}`}>{mode === 'focus' ? '专注' : '休息'}</span>
+            <button
+              className={`mode ${mode}`}
+              onClick={switchMode}
+              title="点击切换专注 / 休息"
+            >
+              {mode === 'focus' ? '专注' : '休息'}
+            </button>
             <span className="time">{fmt(secondsLeft)}</span>
           </div>
         </div>
@@ -264,6 +278,13 @@ export default function PomodoroPanel({ pomodoros, update }: Props) {
             +
           </button>
         </div>
+      </div>
+
+      <div className="pomo-foot">
+        <span>今日</span>
+        <b>{todaySessions.length} 个</b>
+        <span className="sep">·</span>
+        <b>{todayMinutes} 分钟</b>
       </div>
     </div>
   )

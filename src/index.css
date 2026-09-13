@@ -1088,13 +1088,14 @@ textarea::placeholder {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 10px 0 16px;
+  padding: 4px 0 10px;
+  min-height: 0;
 }
 
 .dial {
   position: relative;
-  width: 186px;
-  height: 186px;
+  width: 168px;
+  height: 168px;
 }
 
 .dial svg {
@@ -1112,7 +1113,7 @@ textarea::placeholder {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .mode {
@@ -1123,6 +1124,16 @@ textarea::placeholder {
   border-radius: 999px;
   padding: 2px 12px;
   letter-spacing: 0.14em;
+  cursor: pointer;
+  transition: background 0.18s ease, transform 0.12s ease;
+}
+
+.mode:hover {
+  background: #dbe9e4;
+}
+
+.mode:active {
+  transform: scale(0.96);
 }
 
 .mode.break {
@@ -1130,9 +1141,13 @@ textarea::placeholder {
   background: var(--paper-2);
 }
 
+.mode.break:hover {
+  background: #e6e4da;
+}
+
 .time {
   font-family: var(--mono);
-  font-size: 44px;
+  font-size: 40px;
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--ink);
@@ -1143,55 +1158,59 @@ textarea::placeholder {
 .t-controls {
   display: flex;
   justify-content: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .t-controls .btn {
-  height: 36px;
-  min-width: 96px;
+  height: 34px;
+  flex: 1;
+  min-width: 0;
+}
+
+.t-controls .btn.ghost {
+  flex: 0 0 68px;
 }
 
 .pomo-steppers {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
   margin-top: auto;
-  padding-top: 12px;
+  padding-top: 10px;
   border-top: 1px solid var(--line-soft);
 }
 
 .step {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
+  gap: 5px;
 }
 
 .step .lb {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--muted);
 }
 
 .step b {
   font-family: var(--mono);
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 600;
-  min-width: 24px;
+  min-width: 20px;
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
 .stp {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   border: 1px solid var(--line);
   border-radius: 6px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-family: var(--mono);
-  font-size: 14px;
+  font-size: 12px;
   color: var(--muted);
   background: var(--card);
   transition: border-color 0.18s ease, color 0.18s ease, background 0.18s ease;
@@ -1206,6 +1225,28 @@ textarea::placeholder {
 .stp:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+.pomo-foot {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.pomo-foot b {
+  font-family: var(--mono);
+  font-weight: 600;
+  color: var(--accent-deep);
+}
+
+.pomo-foot .sep {
+  color: #b4bcb6;
 }
 
 /* ---------- 日历 ---------- */
