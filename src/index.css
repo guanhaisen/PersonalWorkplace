@@ -753,6 +753,23 @@ textarea::placeholder {
   border-bottom: 1px solid var(--line-soft);
   border-radius: 6px;
   transition: background 0.18s ease;
+  cursor: grab;
+}
+
+.task:active {
+  cursor: grabbing;
+}
+
+.task.dragging {
+  opacity: 0.35;
+}
+
+.task.drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.task.drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 .task:hover {

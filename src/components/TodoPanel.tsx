@@ -5,7 +5,6 @@ import type { UpdateFn } from '../App'
 import { IconCheck, IconFlag } from './icons'
 
 const PRIORITY_LABEL: Record<Priority, string> = { high: '高', mid: '中', low: '低' }
-const PRIORITY_ORDER: Record<Priority, number> = { high: 0, mid: 1, low: 2 }
 
 type Filter = 'active' | 'overdue' | 'done' | 'all'
 
@@ -31,11 +30,14 @@ export default function TodoPanel({ todos, update }: Props) {
   const [filter, setFilter] = useState<Filter>('active')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingText, setEditingText] = useState('')
+  const [dragId, setDragId] = useState<string | null>(null)
+  const [dropHint, setDropHint] = useState<{ id: string; pos: 'before' | 'after' } | null>(null)
 
   const today = todayStr()
 
+  // 手动排序:数组顺序即显示顺序,拖拽改变顺序;筛选只做过滤
   const visible = useMemo(() => {
-    const filtered = todos.filter((t) => {
+    return todos.filter((t) => {
       switch (filter) {
         case 'done':
           return t.done
@@ -47,10 +49,6 @@ export default function TodoPanel({ todos, update }: Props) {
           return !t.done
       }
     })
-    // 未完成的在前,同组内高优先级在前
-    return [...filtered].sort(
-      (a, b) => Number(a.done) - Number(b.done) || PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority],
-    )
   }, [todos, filter, today])
 
   const activeCount = todos.filter((t) => !t.done).length
@@ -104,6 +102,25 @@ export default function TodoPanel({ todos, update }: Props) {
     update('todos', (items) => items.map((t) => (t.id === id ? { ...t, title } : t)))
   }
 
+  // 拖拽排序:把 source 移动到 target 的 before/after 位置
+  const reorder = (sourceId: string, targetId: string, pos: 'before' | 'after') => {
+    if (sourceId === targetId) return
+    update('todos', (items) => {
+      const next = [...items]
+      const from = next.findIndex((t) => t.id === sourceId)
+      if (from < 0) return items
+      const [moved] = next.splice(from, 1)
+      let to = next.findIndex((t) => t.id === targetId)
+      if (to < 0) {
+        next.splice(from, 0, moved) // 目标不在了,放回原位
+        return next
+      }
+      if (pos === 'after') to += 1
+      next.splice(to, 0, moved)
+      return next
+    })
+  }
+
   return (
     <div className="panel panel-todo">
       <header className="p-head">
@@ -138,7 +155,41 @@ export default function TodoPanel({ todos, update }: Props) {
         {visible.map((t) => {
           const overdue = !t.done && !!t.dueDate && t.dueDate < today
           return (
-            <div key={t.id} className={`task ${t.done ? 'is-done' : ''}`}>
+            <div
+              key={t.id}
+              className={[
+                'task',
+                t.done ? 'is-done' : '',
+                dragId === t.id ? 'dragging' : '',
+                dropHint?.id === t.id ? `drop-${dropHint.pos}` : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              draggable={editingId !== t.id}
+              onDragStart={(e) => {
+                setDragId(t.id)
+                e.dataTransfer.effectAllowed = 'move'
+                e.dataTransfer.setData('text/plain', t.id)
+              }}
+              onDragEnd={() => {
+                setDragId(null)
+                setDropHint(null)
+              }}
+              onDragOver={(e) => {
+                if (!dragId || dragId === t.id) return
+                e.preventDefault()
+                e.dataTransfer.dropEffect = 'move'
+                const rect = e.currentTarget.getBoundingClientRect()
+                const pos = e.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+                if (dropHint?.id !== t.id || dropHint.pos !== pos) setDropHint({ id: t.id, pos })
+              }}
+              onDrop={(e) => {
+                e.preventDefault()
+                if (dragId && dropHint?.id === t.id) reorder(dragId, t.id, dropHint.pos)
+                setDragId(null)
+                setDropHint(null)
+              }}
+            >
               <button
                 className={`cb ${t.done ? 'on' : ''}`}
                 onClick={() => toggle(t.id)}
