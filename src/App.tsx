@@ -7,6 +7,7 @@ import CalendarPanel from './components/CalendarPanel'
 import PomodoroPanel from './components/PomodoroPanel'
 import HabitsPanel from './components/HabitsPanel'
 import { BrandMark, IconHabit, IconNote, IconOverview, IconTimer, IconTodo } from './components/icons'
+import CommandPalette, { type Command } from './components/CommandPalette'
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
 
@@ -33,6 +34,7 @@ export default function App() {
   const [loadError, setLoadError] = useState(false)
   const [saveState, setSaveState] = useState<SaveState>('idle')
   const [view, setView] = useState<ViewKey>('overview')
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const importFileRef = useRef<HTMLInputElement>(null)
   const dataRef = useRef<AppData | null>(null)
   dataRef.current = data
@@ -72,6 +74,80 @@ export default function App() {
     // 触发浏览器下载(GET /api/export 返回 attachment)
     window.location.href = '/api/export'
   }
+
+  // 跨组件动作:面板各自监听这些自定义事件
+  const emit = (name: string) => window.dispatchEvent(new CustomEvent(name))
+
+  // 全局快捷键(输入框打字时失效;Ctrl/⌘+K 任何时刻可用)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement
+      const typing =
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT' ||
+        target.isContentEditable
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setPaletteOpen(true)
+        return
+      }
+      if (typing || paletteOpen || e.repeat || e.metaKey || e.ctrlKey || e.altKey) return
+      switch (e.key) {
+        case '1':
+          setView('overview')
+          break
+        case '2':
+          setView('todos')
+          break
+        case '3':
+          setView('notes')
+          break
+        case '4':
+          setView('focus')
+          break
+        case '5':
+          setView('habits')
+          break
+        case 'n':
+          setView('notes')
+          emit('workbench:new-note')
+          break
+        case 't':
+          setView('todos')
+          emit('workbench:focus-todo-input')
+          break
+        case '/':
+          e.preventDefault()
+          setView('notes')
+          emit('workbench:focus-search')
+          break
+        case 'p':
+          emit('workbench:timer-toggle')
+          break
+        case '?':
+          setPaletteOpen(true)
+          break
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [paletteOpen])
+
+  const commands: Command[] = [
+    ...NAV_ITEMS.map(({ key, label }, i) => ({
+      id: `view-${key}`,
+      label: `前往「${label}」`,
+      hint: String(i + 1),
+      run: () => setView(key),
+    })),
+    { id: 'new-note', label: '新建笔记', hint: 'N', run: () => { setView('notes'); emit('workbench:new-note') } },
+    { id: 'new-todo', label: '新建待办', hint: 'T', run: () => { setView('todos'); emit('workbench:focus-todo-input') } },
+    { id: 'search-notes', label: '搜索笔记', hint: '/', run: () => { setView('notes'); emit('workbench:focus-search') } },
+    { id: 'timer-toggle', label: '开始 / 暂停番茄钟', hint: 'P', run: () => emit('workbench:timer-toggle') },
+    { id: 'timer-reset', label: '重置番茄钟', run: () => emit('workbench:timer-reset') },
+    { id: 'export', label: '导出全部数据', run: handleExport },
+  ]
 
   const handleImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -185,6 +261,13 @@ export default function App() {
             <p>{dateText}</p>
           </div>
           <div className="top-right">
+            <button
+              className="kbd-hint"
+              onClick={() => setPaletteOpen(true)}
+              title="命令面板(Ctrl/⌘+K)"
+            >
+              ⌘K
+            </button>
             <span className="cm">{dateComment}</span>
           </div>
         </header>
@@ -207,6 +290,8 @@ export default function App() {
           </div>
         </div>
       </main>
+
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />
     </div>
   )
 }

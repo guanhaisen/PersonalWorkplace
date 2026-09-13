@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Priority, Todo } from '../types'
 import { todayStr, uid } from '../api'
 import type { UpdateFn } from '../App'
@@ -32,8 +32,16 @@ export default function TodoPanel({ todos, update }: Props) {
   const [editingText, setEditingText] = useState('')
   const [dragId, setDragId] = useState<string | null>(null)
   const [dropHint, setDropHint] = useState<{ id: string; pos: 'before' | 'after' } | null>(null)
+  const addInputRef = useRef<HTMLInputElement>(null)
 
   const today = todayStr()
+
+  // 全局快捷键:聚焦「新建待办」输入框(延迟一拍,等视图切换渲染完成)
+  useEffect(() => {
+    const onFocusInput = () => setTimeout(() => addInputRef.current?.focus(), 60)
+    window.addEventListener('workbench:focus-todo-input', onFocusInput)
+    return () => window.removeEventListener('workbench:focus-todo-input', onFocusInput)
+  }, [])
 
   // 手动排序:数组顺序即显示顺序,拖拽改变顺序;筛选只做过滤
   const visible = useMemo(() => {
@@ -249,6 +257,7 @@ export default function TodoPanel({ todos, update }: Props) {
 
       <div className="todo-add">
         <input
+          ref={addInputRef}
           className="in"
           value={text}
           placeholder="添加任务,回车确认"

@@ -54,6 +54,8 @@ function AutoTextarea({
 
 export default function NotesPanel({ notes, update }: Props) {
   const [query, setQuery] = useState('')
+  const [newId, setNewId] = useState<string | null>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -70,6 +72,7 @@ export default function NotesPanel({ notes, update }: Props) {
       updatedAt: new Date().toISOString(),
     }
     update('notes', (items) => [note, ...items])
+    setNewId(note.id)
   }
 
   const change = (id: string, content: string) =>
@@ -81,6 +84,19 @@ export default function NotesPanel({ notes, update }: Props) {
     update('notes', (items) => items.map((n) => (n.id === id ? { ...n, pinned: !n.pinned } : n)))
 
   const remove = (id: string) => update('notes', (items) => items.filter((n) => n.id !== id))
+
+  // 全局快捷键:新建笔记 / 聚焦搜索(延迟一拍,等视图切换渲染完成)
+  useEffect(() => {
+    const onNew = () => add()
+    const onFocusSearch = () => setTimeout(() => searchRef.current?.focus(), 60)
+    window.addEventListener('workbench:new-note', onNew)
+    window.addEventListener('workbench:focus-search', onFocusSearch)
+    return () => {
+      window.removeEventListener('workbench:new-note', onNew)
+      window.removeEventListener('workbench:focus-search', onFocusSearch)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <div className="panel panel-notes">
@@ -96,6 +112,7 @@ export default function NotesPanel({ notes, update }: Props) {
         <div className="search">
           <IconSearch />
           <input
+            ref={searchRef}
             value={query}
             placeholder="搜索笔记"
             onChange={(e) => setQuery(e.target.value)}
@@ -113,6 +130,7 @@ export default function NotesPanel({ notes, update }: Props) {
               value={n.content}
               onChange={(v) => change(n.id, v)}
               placeholder="记录点什么…"
+              autoFocus={n.id === newId}
             />
             <div className="note-foot">
               <span className="note-time">{relativeTime(n.updatedAt)}</span>

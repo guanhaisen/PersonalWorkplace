@@ -51,6 +51,19 @@ export default function PomodoroPanel({ pomodoros, update }: Props) {
   useEffect(() => localStorage.setItem('pomodoro.focus', String(focusMin)), [focusMin])
   useEffect(() => localStorage.setItem('pomodoro.break', String(breakMin)), [breakMin])
 
+  // 全局快捷键:开始/暂停、重置(经 ref 取最新闭包,监听只注册一次)
+  const handlersRef = useRef({ toggle: () => {}, reset: () => {} })
+  useEffect(() => {
+    const onToggle = () => handlersRef.current.toggle()
+    const onReset = () => handlersRef.current.reset()
+    window.addEventListener('workbench:timer-toggle', onToggle)
+    window.addEventListener('workbench:timer-reset', onReset)
+    return () => {
+      window.removeEventListener('workbench:timer-toggle', onToggle)
+      window.removeEventListener('workbench:timer-reset', onReset)
+    }
+  }, [])
+
   // 挂载时恢复上次计时:running 则继续倒计时;离开期间已到点则补记一节
   useEffect(() => {
     if (restoredRef.current) return
@@ -182,6 +195,9 @@ export default function PomodoroPanel({ pomodoros, update }: Props) {
     completedRef.current = false
     saveTimer({ mode: 'focus', running: false, secondsLeft: focusMin * 60 })
   }
+
+  handlersRef.current.toggle = () => (running ? pause() : start())
+  handlersRef.current.reset = reset
 
   const total = (mode === 'focus' ? focusMin : breakMin) * 60
   const progress = total > 0 ? 1 - secondsLeft / total : 0
