@@ -1,4 +1,5 @@
 node_modules/
 dist/
 .zcode/
+design-demos/
 data/*.tmp
