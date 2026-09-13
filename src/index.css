@@ -335,15 +335,37 @@ textarea::placeholder {
 /* ---------- 面板网格:一套节点,多种视图布局 ---------- */
 
 .board {
-  display: grid;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   gap: 18px;
-  align-items: stretch;
   max-width: 1280px;
   width: 100%;
   margin: 0 auto;
-  grid-template-columns: repeat(12, 1fr);
-  grid-auto-flow: row dense;
-  grid-auto-rows: minmax(260px, auto);
+}
+
+/* 每行一个栅格,行内卡片均分宽度 */
+.board-row {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  gap: 18px;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.board-newrow {
+  flex: 0 0 auto;
+  border: 1.5px dashed var(--accent);
+  border-radius: 10px;
+  padding: 18px;
+  text-align: center;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  background: var(--accent-tint);
 }
 
 .cell {
@@ -356,27 +378,7 @@ textarea::placeholder {
 
 .cell > .panel {
   flex: 1;
-}
-
-/* 面板跨列数与顺序在总览由用户布局决定(内联样式 + 拖拽);
-   其他视图仍走命名区域模板 */
-.board:not(.v-overview) .cell-todo {
-  grid-area: todo;
-}
-.board:not(.v-overview) .cell-notes {
-  grid-area: notes;
-}
-.board:not(.v-overview) .cell-cal {
-  grid-area: cal;
-}
-.board:not(.v-overview) .cell-pomo {
-  grid-area: pomo;
-}
-.board:not(.v-overview) .cell-habits {
-  grid-area: hab;
-}
-.board:not(.v-overview) .cell-keys {
-  grid-area: keys;
+  overflow-y: auto;
 }
 
 /* 卡片悬浮布局工具条 */
@@ -436,50 +438,18 @@ textarea::placeholder {
   cursor: grabbing;
 }
 
-.board.v-todos {
-  grid-template-columns: minmax(0, 720px);
-  grid-template-areas: 'todo';
-}
-
-.board.v-notes {
-  grid-template-columns: minmax(0, 760px);
-  grid-template-areas: 'notes';
-}
-
-.board.v-habits {
-  grid-template-columns: minmax(0, 760px);
-  grid-template-areas: 'hab';
-}
-
-.board.v-focus {
-  max-width: 960px;
-  grid-template-columns: 1fr 1.15fr;
-  grid-template-areas: 'pomo cal';
-}
-
-.board.v-todos > :not(.cell-todo),
-.board.v-notes > :not(.cell-notes),
-.board.v-focus > :not(.cell-pomo):not(.cell-cal),
-.board.v-habits > :not(.cell-habits) {
-  display: none;
-}
-
-@media (max-width: 900px) {
-  .board.v-focus {
-    grid-template-columns: 1fr;
-    grid-template-areas:
-      'pomo'
-      'cal';
-  }
-}
-
 @media (max-width: 1080px) {
   .board {
-    grid-template-columns: 1fr 1fr;
+    flex: none;
   }
 
-  .board .cell {
-    grid-column: 1 / -1 !important;
+  .board-row {
+    flex: none;
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .board-newrow {
+    flex: 1 0 auto;
   }
 }
 
