@@ -2735,3 +2735,145 @@ kbd {
 .report-ai-btn {
   margin-top: 8px;
 }
+
+/* ---------- 手机端适配(≤640px) ---------- */
+
+@media (max-width: 640px) {
+  /* 头部:问候与按钮换行,收藏条整行横滚 */
+  .app-header {
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+
+  .hello h1 {
+    font-size: 20px;
+  }
+
+  .head-links {
+    order: 3;
+    flex-basis: 100%;
+    margin: 0;
+    justify-content: flex-start;
+  }
+
+  .top-right {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .top-right .cm {
+    display: none;
+  }
+
+  /* 侧栏:粘性顶栏,导航横滑 */
+  .sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    padding: 8px 10px;
+    gap: 6px;
+  }
+
+  .brand {
+    flex: none;
+    padding: 0 2px 0 0;
+  }
+
+  .brand-name {
+    font-size: 13px;
+  }
+
+  .nav {
+    flex: 1;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    min-width: 0;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav-item {
+    flex: none;
+    height: 32px;
+    padding: 0 9px;
+  }
+
+  .sidebar-foot {
+    flex: none;
+  }
+
+  .save-line,
+  .collapse-btn {
+    display: none;
+  }
+
+  /* 内容与卡片:收窄留白,单列堆叠(行内联网格用 !important 覆盖) */
+  .content {
+    padding: 14px 12px 40px;
+  }
+
+  .panel {
+    padding: 14px;
+  }
+
+  .board,
+  .board-row {
+    gap: 10px;
+  }
+
+  .board-row {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* 卡片拖拽互换依赖 HTML5 拖放,触屏不可用,隐藏悬浮工具条 */
+  .layout-tools {
+    display: none;
+  }
+
+  .day {
+    height: 40px;
+  }
+
+  .report-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* 弹窗贴边留缝 */
+  .cmd-panel,
+  .ai-modal,
+  .sp-modal {
+    max-width: calc(100vw - 20px);
+  }
+
+  /* 输入 16px 起,避免 iOS 聚焦自动放大页面 */
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
+/* 触屏没有 hover:原本悬停才出现的操作改为常显 */
+@media (hover: none) {
+  .head-link-x,
+  .name-edit-btn {
+    opacity: 1;
+  }
+}
+
+/* 窄卡片下面板头允许换行(周报日期范围等不再被截断) */
+@media (max-width: 640px) {
+  .p-head {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  .p-head > .week-nav {
+    margin-left: auto;
+  }
+}
