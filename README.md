@@ -4,6 +4,7 @@
 ![React](https://img.shields.io/badge/React-18-61dafb)
 ![Vite](https://img.shields.io/badge/Vite-5-646cff)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6)
+![License](https://img.shields.io/badge/license-MIT-blue)
 
 一个跑在本地的个人效率工具:待办任务、笔记、番茄钟、习惯打卡、日历热力图、AI 助手、周报。数据以 JSON 文件存在本机,不依赖任何云端账号。
 
@@ -113,4 +114,4 @@ React 18 + Vite + TypeScript 前端;Express 轻量后端(端口 3001),写入采�
 
 ## 许可证
 
-暂未附带开源许可证(默认保留所有权利);如决定以宽松协议开源,可自行添加 MIT LICENSE 文件。
+[MIT](LICENSE)
