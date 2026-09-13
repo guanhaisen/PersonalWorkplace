@@ -2913,3 +2913,55 @@ kbd {
     opacity: 1;
   }
 }
+
+/* ---------- 总览胶囊:手机端手风琴,桌面隐藏 ---------- */
+
+.capsule-head {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .cell.has-cap > .capsule-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 11px 14px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--card);
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--ink);
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .cell.has-cap > .capsule-head svg {
+    flex: none;
+    color: var(--accent);
+  }
+
+  .cell.has-cap > .capsule-head .cap-chev {
+    margin-left: auto;
+    font-style: normal;
+    font-size: 10px;
+    color: var(--muted);
+    transition: transform 0.16s ease;
+  }
+
+  .cell.cap-open > .capsule-head {
+    border-color: var(--accent-soft);
+    color: var(--accent-deep);
+  }
+
+  .cell.cap-open > .capsule-head .cap-chev {
+    transform: rotate(180deg);
+    color: var(--accent);
+  }
+
+  /* 手风琴:只展开胶囊选中的那张卡,其余隐藏(面板保持挂载,计时状态不丢) */
+  .cell.has-cap:not(.cap-open) > .panel {
+    display: none;
+  }
+}

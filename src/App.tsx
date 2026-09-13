@@ -11,7 +11,7 @@ import AiPanel from './components/AiPanel'
 import ReportPanel from './components/ReportPanel'
 import LinksBar from './components/LinksBar'
 import StartPageModal from './components/StartPageModal'
-import { BrandMark, IconAi, IconGrip, IconHabit, IconNote, IconOverview, IconReport, IconTimer, IconTodo } from './components/icons'
+import { BrandMark, IconAi, IconCalendar, IconGrip, IconHabit, IconKeys, IconNote, IconOverview, IconReport, IconTimer, IconTodo } from './components/icons'
 import CommandPalette, { type Command } from './components/CommandPalette'
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
@@ -65,6 +65,18 @@ const NAV_META: Record<ViewKey, { label: string; icon: JSX.Element }> = {
   report: { label: '周报', icon: <IconReport /> },
 }
 
+// 手机端总览的胶囊头:卡片折叠为胶囊,点开一张、收起其余
+const CAPSULE_META: Record<PanelId, { label: string; icon: JSX.Element }> = {
+  todo: { label: '待办任务', icon: <IconTodo /> },
+  notes: { label: '笔记', icon: <IconNote /> },
+  cal: { label: '日历', icon: <IconCalendar /> },
+  pomo: { label: '番茄钟', icon: <IconTimer /> },
+  hab: { label: '习惯打卡', icon: <IconHabit /> },
+  keys: { label: '快捷键', icon: <IconKeys /> },
+  ai: { label: 'AI 助手', icon: <IconAi /> },
+  report: { label: '周报', icon: <IconReport /> },
+}
+
 // 导航顺序可自由调整(拖拽),数字快捷键跟随位置
 const NAV_KEY = 'nav.order.v1'
 const DEFAULT_NAV: ViewKey[] = ['overview', 'todos', 'notes', 'focus', 'habits', 'ai', 'report']
@@ -107,6 +119,8 @@ export default function App() {
   )
   const [dragPanel, setDragPanel] = useState<PanelId | null>(null)
   const [dropTarget, setDropTarget] = useState<PanelId | null>(null)
+  // 手机端总览:当前展开的胶囊对应卡片;null = 全部收起
+  const [openCapsule, setOpenCapsule] = useState<PanelId | null>(null)
   const importFileRef = useRef<HTMLInputElement>(null)
   const dataRef = useRef<AppData | null>(null)
 
@@ -694,13 +708,16 @@ export default function App() {
           const inView = new Set(viewRows.flat())
           const hidden = PANEL_IDS.filter((id) => !inView.has(id))
 
-          const cellOf = (id: PanelId) => {
+          const cellOf = (id: PanelId, withCapsule: boolean) => {
             const isDragging = dragPanel === id
             const isTarget = !!dropTarget && dropTarget === id && dragPanel !== null && dragPanel !== id
+            const capOpen = withCapsule && openCapsule === id
             return (
               <div
                 key={id}
-                className={`cell cell-${id} ${isDragging ? 'dragging' : ''} ${isTarget ? 'drop-target' : ''}`}
+                className={`cell cell-${id} ${withCapsule ? 'has-cap' : ''} ${capOpen ? 'cap-open' : ''} ${
+                  isDragging ? 'dragging' : ''
+                } ${isTarget ? 'drop-target' : ''}`}
                 onDragOver={(e) => {
                   if (!dragPanel || dragPanel === id) return
                   e.preventDefault()
@@ -735,6 +752,20 @@ export default function App() {
                     <IconGrip />
                   </button>
                 </div>
+                {withCapsule && (
+                  <button
+                    type="button"
+                    className="capsule-head"
+                    aria-expanded={capOpen}
+                    onClick={() => setOpenCapsule(capOpen ? null : id)}
+                  >
+                    {CAPSULE_META[id].icon}
+                    <span>{CAPSULE_META[id].label}</span>
+                    <i className="cap-chev" aria-hidden="true">
+                      ▾
+                    </i>
+                  </button>
+                )}
                 {panelEls[id]}
               </div>
             )
@@ -748,10 +779,10 @@ export default function App() {
                   className="board-row"
                   style={{ gridTemplateColumns: `repeat(${row.length}, minmax(0, 1fr))` }}
                 >
-                  {row.map((id) => cellOf(id))}
+                  {row.map((id) => cellOf(id, view === 'overview'))}
                 </div>
               ))}
-              {hidden.length > 0 && <div style={{ display: 'none' }}>{hidden.map((id) => cellOf(id))}</div>}
+              {hidden.length > 0 && <div style={{ display: 'none' }}>{hidden.map((id) => cellOf(id, false))}</div>}
             </div>
           )
         })()}

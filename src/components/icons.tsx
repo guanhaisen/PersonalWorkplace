@@ -136,3 +136,30 @@ export function IconSearch() {
     </svg>
   )
 }
+
+/** 日历:带挂耳的月历 */
+export function IconCalendar() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <rect x="2.2" y="3.2" width="11.6" height="10.6" rx="2" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M2.5 6.6h11" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M5.4 1.8v2.6M10.6 1.8v2.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+/** 快捷键:键盘与按键 */
+export function IconKeys() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <rect x="1.8" y="4.4" width="12.4" height="7.2" rx="1.6" stroke="currentColor" strokeWidth="1.5" />
+      <path
+        d="M4.6 6.9h.01M8 6.9h.01M11.4 6.9h.01"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+      />
+      <path d="M5.4 9.3h5.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  )
+}
