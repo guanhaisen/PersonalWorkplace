@@ -88,6 +88,20 @@ export function IconCheck() {
   )
 }
 
+/** 卡片拖拽手柄:两列圆点 */
+export function IconGrip() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+      <circle cx="4" cy="2.5" r="1.3" />
+      <circle cx="8" cy="2.5" r="1.3" />
+      <circle cx="4" cy="6" r="1.3" />
+      <circle cx="8" cy="6" r="1.3" />
+      <circle cx="4" cy="9.5" r="1.3" />
+      <circle cx="8" cy="9.5" r="1.3" />
+    </svg>
+  )
+}
+
 export function IconSearch() {
   return (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">

@@ -7,7 +7,7 @@ import CalendarPanel from './components/CalendarPanel'
 import PomodoroPanel from './components/PomodoroPanel'
 import HabitsPanel from './components/HabitsPanel'
 import ShortcutsPanel from './components/ShortcutsPanel'
-import { BrandMark, IconHabit, IconNote, IconOverview, IconTimer, IconTodo } from './components/icons'
+import { BrandMark, IconGrip, IconHabit, IconNote, IconOverview, IconTimer, IconTodo } from './components/icons'
 import CommandPalette, { type Command } from './components/CommandPalette'
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
@@ -18,6 +18,46 @@ export type UpdateFn = <K extends CollectionKey>(
 ) => void
 
 type ViewKey = 'overview' | 'todos' | 'notes' | 'focus' | 'habits'
+
+// ---------- 总览自由布局 ----------
+
+type PanelId = 'todo' | 'notes' | 'cal' | 'pomo' | 'hab' | 'keys'
+
+const PANEL_IDS: PanelId[] = ['todo', 'notes', 'cal', 'pomo', 'hab', 'keys']
+const SPAN_STEPS = [3, 4, 5, 6, 8, 12]
+const LAYOUT_KEY = 'overview.layout.v1'
+
+interface OverviewLayout {
+  order: PanelId[]
+  spans: Record<PanelId, number>
+}
+
+const DEFAULT_LAYOUT: OverviewLayout = {
+  order: ['todo', 'notes', 'pomo', 'cal', 'hab', 'keys'],
+  spans: { todo: 5, notes: 4, cal: 4, pomo: 3, hab: 4, keys: 4 },
+}
+
+function loadLayout(): OverviewLayout {
+  try {
+    const raw = localStorage.getItem(LAYOUT_KEY)
+    if (!raw) return DEFAULT_LAYOUT
+    const parsed = JSON.parse(raw)
+    const order = Array.isArray(parsed?.order)
+      ? (parsed.order as PanelId[]).filter((id) => PANEL_IDS.includes(id))
+      : []
+    for (const id of PANEL_IDS) if (!order.includes(id)) order.push(id)
+    const spans = { ...DEFAULT_LAYOUT.spans }
+    if (parsed?.spans) {
+      for (const id of PANEL_IDS) {
+        const s = Number(parsed.spans[id])
+        if (SPAN_STEPS.includes(s)) spans[id] = s
+      }
+    }
+    return { order, spans }
+  } catch {
+    return DEFAULT_LAYOUT
+  }
+}
 
 const NAV_ITEMS: { key: ViewKey; label: string; icon: JSX.Element }[] = [
   { key: 'overview', label: '总览', icon: <IconOverview /> },
@@ -36,8 +76,37 @@ export default function App() {
   const [saveState, setSaveState] = useState<SaveState>('idle')
   const [view, setView] = useState<ViewKey>('overview')
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [layout, setLayout] = useState<OverviewLayout>(loadLayout)
+  const [dragPanel, setDragPanel] = useState<PanelId | null>(null)
+  const [dropTarget, setDropTarget] = useState<PanelId | null>(null)
   const importFileRef = useRef<HTMLInputElement>(null)
   const dataRef = useRef<AppData | null>(null)
+
+  // 布局持久化
+  useEffect(() => {
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout))
+  }, [layout])
+
+  const movePanel = (src: PanelId, dst: PanelId) => {
+    if (src === dst) return
+    setLayout((l) => {
+      const order = l.order.filter((id) => id !== src)
+      const to = order.indexOf(dst)
+      if (to < 0) return l
+      order.splice(to, 0, src)
+      return { ...l, order }
+    })
+  }
+
+  const changeSpan = (id: PanelId, dir: 1 | -1) =>
+    setLayout((l) => {
+      const idx = SPAN_STEPS.indexOf(l.spans[id])
+      const next = SPAN_STEPS[Math.min(SPAN_STEPS.length - 1, Math.max(0, idx + dir))]
+      if (next === l.spans[id]) return l
+      return { ...l, spans: { ...l.spans, [id]: next } }
+    })
+
+  const resetLayout = () => setLayout(DEFAULT_LAYOUT)
   dataRef.current = data
   const timers = useRef<Partial<Record<CollectionKey, ReturnType<typeof setTimeout>>>>({})
 
@@ -314,6 +383,11 @@ export default function App() {
             <p>{dateText}</p>
           </div>
           <div className="top-right">
+            {view === 'overview' && (
+              <button className="kbd-hint" onClick={resetLayout} title="恢复默认布局">
+                重置布局
+              </button>
+            )}
             <button
               className="kbd-hint"
               onClick={() => setPaletteOpen(true)}
@@ -325,26 +399,75 @@ export default function App() {
           </div>
         </header>
 
-        <div className={`board v-${view}`}>
-          <div className="cell cell-todo">
-            <TodoPanel todos={data.todos} update={update} />
-          </div>
-          <div className="cell cell-notes">
-            <NotesPanel notes={data.notes} update={update} />
-          </div>
-          <div className="cell cell-cal">
-            <CalendarPanel pomodoros={data.pomodoros} habits={data.habits} />
-          </div>
-          <div className="cell cell-pomo">
-            <PomodoroPanel pomodoros={data.pomodoros} update={update} />
-          </div>
-          <div className="cell cell-habits">
-            <HabitsPanel habits={data.habits} update={update} />
-          </div>
-          <div className="cell cell-keys">
-            <ShortcutsPanel onOpenPalette={() => setPaletteOpen(true)} />
-          </div>
-        </div>
+        {(() => {
+          const panelEls: Record<PanelId, JSX.Element> = {
+            todo: <TodoPanel todos={data.todos} update={update} />,
+            notes: <NotesPanel notes={data.notes} update={update} />,
+            cal: <CalendarPanel pomodoros={data.pomodoros} habits={data.habits} />,
+            pomo: <PomodoroPanel pomodoros={data.pomodoros} update={update} />,
+            hab: <HabitsPanel habits={data.habits} update={update} />,
+            keys: <ShortcutsPanel onOpenPalette={() => setPaletteOpen(true)} />,
+          }
+          return (
+            <div className={`board v-${view}`}>
+              {layout.order.map((id) => (
+                <div
+                  key={id}
+                  className={[
+                    'cell',
+                    `cell-${id}`,
+                    dragPanel === id ? 'dragging' : '',
+                    dropTarget === id && dragPanel && dragPanel !== id ? 'drop-target' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  style={view === 'overview' ? { gridColumn: `span ${layout.spans[id]}` } : undefined}
+                  onDragOver={(e) => {
+                    if (!dragPanel || dragPanel === id) return
+                    e.preventDefault()
+                    e.dataTransfer.dropEffect = 'move'
+                    if (dropTarget !== id) setDropTarget(id)
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    if (dragPanel && dropTarget) movePanel(dragPanel, dropTarget)
+                    setDragPanel(null)
+                    setDropTarget(null)
+                  }}
+                  onDragLeave={(e) => {
+                    if (e.target === e.currentTarget && dropTarget === id) setDropTarget(null)
+                  }}
+                >
+                  <div className="layout-tools">
+                    <button
+                      className="layout-grip"
+                      draggable
+                      onDragStart={(e) => {
+                        setDragPanel(id)
+                        e.dataTransfer.effectAllowed = 'move'
+                        e.dataTransfer.setData('text/plain', id)
+                      }}
+                      onDragEnd={() => {
+                        setDragPanel(null)
+                        setDropTarget(null)
+                      }}
+                      title="拖动调整位置"
+                    >
+                      <IconGrip />
+                    </button>
+                    <button title="缩窄" onClick={() => changeSpan(id, -1)}>
+                      −
+                    </button>
+                    <button title="加宽" onClick={() => changeSpan(id, 1)}>
+                      +
+                    </button>
+                  </div>
+                  {panelEls[id]}
+                </div>
+              ))}
+            </div>
+          )
+        })()}
       </main>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />

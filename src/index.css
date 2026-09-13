@@ -342,43 +342,98 @@ textarea::placeholder {
   width: 100%;
   margin: 0 auto;
   grid-template-columns: repeat(12, 1fr);
-  grid-template-areas:
-    'todo todo todo todo todo notes notes notes notes pomo pomo pomo'
-    'cal  cal  cal  cal  hab  hab   hab   hab   keys keys keys keys';
+  grid-auto-flow: row dense;
+  grid-auto-rows: minmax(260px, auto);
 }
 
 .cell {
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  position: relative;
 }
 
 .cell > .panel {
   flex: 1;
 }
 
-.cell-todo {
+/* 面板跨列数与顺序在总览由用户布局决定(内联样式 + 拖拽);
+   其他视图仍走命名区域模板 */
+.board:not(.v-overview) .cell-todo {
   grid-area: todo;
 }
-
-.cell-notes {
+.board:not(.v-overview) .cell-notes {
   grid-area: notes;
 }
-
-.cell-cal {
+.board:not(.v-overview) .cell-cal {
   grid-area: cal;
 }
-
-.cell-pomo {
+.board:not(.v-overview) .cell-pomo {
   grid-area: pomo;
 }
-
-.cell-habits {
+.board:not(.v-overview) .cell-habits {
   grid-area: hab;
 }
-
-.cell-keys {
+.board:not(.v-overview) .cell-keys {
   grid-area: keys;
+}
+
+/* 卡片悬浮布局工具条 */
+.layout-tools {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 5;
+  display: flex;
+  gap: 2px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  box-shadow: 0 1px 4px rgba(16, 24, 40, 0.08);
+}
+
+.cell:hover .layout-tools {
+  opacity: 1;
+}
+
+.cell.dragging {
+  opacity: 0.4;
+}
+
+.cell.drop-target {
+  box-shadow: 0 0 0 2px var(--accent);
+  border-radius: 12px;
+}
+
+.layout-tools button {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--muted);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.layout-tools button:hover {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.layout-tools .layout-grip {
+  cursor: grab;
+  color: var(--text-3);
+}
+
+.layout-tools .layout-grip:active {
+  cursor: grabbing;
 }
 
 .board.v-todos {
@@ -421,11 +476,10 @@ textarea::placeholder {
 @media (max-width: 1080px) {
   .board {
     grid-template-columns: 1fr 1fr;
-    grid-template-areas:
-      'todo todo'
-      'notes notes'
-      'pomo cal'
-      'hab keys';
+  }
+
+  .board .cell {
+    grid-column: 1 / -1 !important;
   }
 }
 
@@ -1255,7 +1309,7 @@ textarea::placeholder {
   color: var(--muted);
 }
 
-/* 大屏:总览锁定为一屏,卡片内容在卡片内滚动 */
+/* 大屏:内容区独立滚动,侧栏常驻 */
 @media (min-width: 1081px) {
   .shell {
     height: 100vh;
@@ -1267,14 +1321,14 @@ textarea::placeholder {
     overflow-y: auto;
   }
 
-  .board.v-overview {
-    flex: 1;
-    min-height: 0;
-    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
-  }
-
   .panel-cal {
     overflow-y: auto;
+  }
+
+  /* 自由布局下行高随内容走,给列表设上限保持卡片内滚动 */
+  .board.v-overview .task-list,
+  .board.v-overview .note-list {
+    max-height: 46vh;
   }
 }
 
