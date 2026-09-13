@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { Habit } from '../types'
-import { todayStr, uid } from '../api'
+import { streak, todayStr, uid } from '../api'
 import type { UpdateFn } from '../App'
 import { IconCheck } from './icons'
 
@@ -10,18 +10,6 @@ interface Props {
 }
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
-
-// 连续天数:从今天(或今天未打卡时从昨天)往前数
-function streak(records: Record<string, true>): number {
-  let n = 0
-  const d = new Date()
-  if (!records[todayStr(d)]) d.setDate(d.getDate() - 1)
-  while (records[todayStr(d)]) {
-    n++
-    d.setDate(d.getDate() - 1)
-  }
-  return n
-}
 
 export default function HabitsPanel({ habits, update }: Props) {
   const [name, setName] = useState('')

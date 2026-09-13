@@ -102,6 +102,32 @@ export function IconGrip() {
   )
 }
 
+/** AI 助手:四角星 */
+export function IconAi() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M8 1.8C8.6 5 11 7.4 14.2 8 11 8.6 8.6 11 8 14.2 7.4 11 5 8.6 1.8 8 5 7.4 7.4 5 8 1.8Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+/** 周报:基线上的三根柱 */
+export function IconReport() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M2.6 13.4h10.8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M4.4 13V9.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M8 13V5.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M11.6 13V7.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 export function IconSearch() {
   return (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">

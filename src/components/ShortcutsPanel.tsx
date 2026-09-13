@@ -4,7 +4,7 @@ interface Props {
 
 const SHORTCUTS: { keys: string; label: string }[] = [
   { keys: '⌘K', label: '命令面板' },
-  { keys: '1-5', label: '切换视图' },
+  { keys: '1-7', label: '切换视图' },
   { keys: 'N', label: '新建笔记' },
   { keys: 'T', label: '新建待办' },
   { keys: '/', label: '搜索笔记' },

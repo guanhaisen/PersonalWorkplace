@@ -4,3 +4,4 @@ dist/
 design-demos/
 data/backups/
 data/*.tmp
+data/ai-config.json

@@ -7,7 +7,11 @@ import CalendarPanel from './components/CalendarPanel'
 import PomodoroPanel from './components/PomodoroPanel'
 import HabitsPanel from './components/HabitsPanel'
 import ShortcutsPanel from './components/ShortcutsPanel'
-import { BrandMark, IconGrip, IconHabit, IconNote, IconOverview, IconTimer, IconTodo } from './components/icons'
+import AiPanel from './components/AiPanel'
+import ReportPanel from './components/ReportPanel'
+import LinksBar from './components/LinksBar'
+import StartPageModal from './components/StartPageModal'
+import { BrandMark, IconAi, IconGrip, IconHabit, IconNote, IconOverview, IconReport, IconTimer, IconTodo } from './components/icons'
 import CommandPalette, { type Command } from './components/CommandPalette'
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
@@ -17,14 +21,16 @@ export type UpdateFn = <K extends CollectionKey>(
   updater: (items: AppData[K]) => AppData[K],
 ) => void
 
-type ViewKey = 'overview' | 'todos' | 'notes' | 'focus' | 'habits'
+export type ViewKey = 'overview' | 'todos' | 'notes' | 'focus' | 'habits' | 'ai' | 'report'
 
 // ---------- 总览布局:严格两行三列,拖拽互换 ----------
 
-type PanelId = 'todo' | 'notes' | 'cal' | 'pomo' | 'hab' | 'keys'
+type PanelId = 'todo' | 'notes' | 'cal' | 'pomo' | 'hab' | 'keys' | 'ai' | 'report'
 type Rows = PanelId[][]
 
-const PANEL_IDS: PanelId[] = ['todo', 'notes', 'cal', 'pomo', 'hab', 'keys']
+// 总览可放置的 6 张卡;ai / report 面板常驻挂载但不进总览槽位
+const SLOT_IDS: PanelId[] = ['todo', 'notes', 'cal', 'pomo', 'hab', 'keys']
+const PANEL_IDS: PanelId[] = [...SLOT_IDS, 'ai', 'report']
 const LAYOUT_KEY = 'overview.layout.v3'
 
 const DEFAULT_SLOTS: PanelId[] = ['todo', 'notes', 'pomo', 'cal', 'hab', 'keys']
@@ -39,9 +45,9 @@ function loadSlots(): PanelId[] {
       const flat = Array.isArray(parsed) && Array.isArray(parsed[0]) ? parsed.flat() : parsed
       if (!Array.isArray(flat)) continue
       const ids = flat.filter(
-        (id: PanelId, i: number) => PANEL_IDS.includes(id) && flat.indexOf(id) === i,
+        (id: PanelId, i: number) => SLOT_IDS.includes(id) && flat.indexOf(id) === i,
       )
-      if (ids.length === PANEL_IDS.length) return ids as PanelId[]
+      if (ids.length === SLOT_IDS.length) return ids as PanelId[]
     }
   } catch {
     // 忽略损坏的存档
@@ -55,11 +61,13 @@ const NAV_META: Record<ViewKey, { label: string; icon: JSX.Element }> = {
   notes: { label: '笔记', icon: <IconNote /> },
   focus: { label: '专注', icon: <IconTimer /> },
   habits: { label: '习惯', icon: <IconHabit /> },
+  ai: { label: 'AI 助手', icon: <IconAi /> },
+  report: { label: '周报', icon: <IconReport /> },
 }
 
 // 导航顺序可自由调整(拖拽),数字快捷键跟随位置
 const NAV_KEY = 'nav.order.v1'
-const DEFAULT_NAV: ViewKey[] = ['overview', 'todos', 'notes', 'focus', 'habits']
+const DEFAULT_NAV: ViewKey[] = ['overview', 'todos', 'notes', 'focus', 'habits', 'ai', 'report']
 
 function loadNavOrder(): ViewKey[] {
   try {
@@ -70,7 +78,9 @@ function loadNavOrder(): ViewKey[] {
         const ids = parsed.filter(
           (id: ViewKey, i: number) => DEFAULT_NAV.includes(id) && parsed.indexOf(id) === i,
         )
-        if (ids.length === DEFAULT_NAV.length) return ids as ViewKey[]
+        // 旧存档缺新增视图时追加到末尾,避免重置用户已排好的顺序
+        for (const id of DEFAULT_NAV) if (!ids.includes(id)) ids.push(id)
+        return ids as ViewKey[]
       }
     }
   } catch {
@@ -99,6 +109,158 @@ export default function App() {
   const [dropTarget, setDropTarget] = useState<PanelId | null>(null)
   const importFileRef = useRef<HTMLInputElement>(null)
   const dataRef = useRef<AppData | null>(null)
+
+  // ---------- 总览右下角 AI 悬浮球:可拖动,位置记在 localStorage ----------
+
+  const FAB_POS_KEY = 'ai.fab.pos.v1'
+  const FAB_SIZE = 52
+  const FAB_MARGIN = 8
+
+  const clampFab = (p: { right: number; bottom: number }) => ({
+    right: Math.min(
+      Math.max(Math.round(p.right), FAB_MARGIN),
+      Math.max(window.innerWidth - FAB_SIZE - FAB_MARGIN, FAB_MARGIN),
+    ),
+    bottom: Math.min(
+      Math.max(Math.round(p.bottom), FAB_MARGIN),
+      Math.max(window.innerHeight - FAB_SIZE - FAB_MARGIN, FAB_MARGIN),
+    ),
+  })
+
+  const [fabPos, setFabPos] = useState<{ right: number; bottom: number } | null>(() => {
+    try {
+      const raw = localStorage.getItem(FAB_POS_KEY)
+      if (!raw) return null
+      const p = JSON.parse(raw)
+      if (typeof p?.right === 'number' && typeof p?.bottom === 'number') return clampFab(p)
+    } catch {
+      // 忽略损坏存档
+    }
+    return null
+  })
+  const fabRef = useRef<HTMLButtonElement>(null)
+  const fabDrag = useRef<{
+    startX: number
+    startY: number
+    startRight: number
+    startBottom: number
+    next?: { right: number; bottom: number }
+  } | null>(null)
+  const [fabDragging, setFabDragging] = useState(false)
+  // 区分拖动与点击:pointerup 后由 onClick 读取并复位
+  const fabMoved = useRef(false)
+  // 悬浮球点击弹出就地聊天窗(不跳转页面);位置锚定按钮当前所在处
+  const [fabChatOpen, setFabChatOpen] = useState(false)
+  const [fabChatPos, setFabChatPos] = useState<{ left: number; top: number } | null>(null)
+  // 问候语名字:个人偏好,存 localStorage
+  const [name, setName] = useState(() => localStorage.getItem('profile.name') || '')
+  const [nameDraft, setNameDraft] = useState('')
+  const [editingName, setEditingName] = useState(false)
+  const nameInputRef = useRef<HTMLInputElement>(null)
+  // 「设为浏览器开始页」指引弹窗
+  const [startPageOpen, setStartPageOpen] = useState(false)
+
+  const startEditName = () => {
+    setNameDraft(name)
+    setEditingName(true)
+    requestAnimationFrame(() => {
+      nameInputRef.current?.focus()
+      nameInputRef.current?.select()
+    })
+  }
+
+  const saveName = () => {
+    const v = nameDraft.trim()
+    setName(v)
+    localStorage.setItem('profile.name', v)
+    setEditingName(false)
+  }
+
+  const toggleFabChat = () => {
+    if (fabChatOpen) {
+      setFabChatOpen(false)
+      return
+    }
+    // 优先在按钮上方右对齐;上方放不下翻到按钮下方;始终钳制在视口内
+    const vw = window.innerWidth
+    const vh = window.innerHeight
+    const W = Math.min(380, vw - 24)
+    const H = Math.min(520, vh - 140)
+    const gap = 12
+    const r = fabRef.current?.getBoundingClientRect()
+    let left = r ? r.right - W : vw - 30 - W
+    let top = r ? r.top - gap - H : vh - 96 - H
+    if (r && top < gap) top = r.bottom + gap
+    left = Math.min(Math.max(left, gap), Math.max(vw - W - gap, gap))
+    top = Math.min(Math.max(top, gap), Math.max(vh - H - gap, gap))
+    setFabChatPos({ left: Math.round(left), top: Math.round(top) })
+    setFabChatOpen(true)
+  }
+
+  const onFabPointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (e.button !== 0) return
+    e.currentTarget.setPointerCapture(e.pointerId)
+    const rect = e.currentTarget.getBoundingClientRect()
+    fabDrag.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startRight: window.innerWidth - rect.right,
+      startBottom: window.innerHeight - rect.bottom,
+    }
+    fabMoved.current = false
+  }
+
+  const onFabPointerMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    const d = fabDrag.current
+    if (!d) return
+    const dx = e.clientX - d.startX
+    const dy = e.clientY - d.startY
+    if (!fabMoved.current && Math.hypot(dx, dy) < 5) return
+    if (!fabMoved.current) {
+      fabMoved.current = true
+      setFabDragging(true)
+    }
+    const next = clampFab({ right: d.startRight - dx, bottom: d.startBottom - dy })
+    d.next = next
+    // 拖动过程直接改样式,避免每个 mousemove 都重渲染整棵 App 树
+    const el = fabRef.current
+    if (el) {
+      el.style.right = `${next.right}px`
+      el.style.bottom = `${next.bottom}px`
+    }
+  }
+
+  const endFabDrag = () => {
+    const d = fabDrag.current
+    fabDrag.current = null
+    setFabDragging(false)
+    if (!d) return
+    if (fabMoved.current && d.next) {
+      setFabPos(d.next)
+      localStorage.setItem(FAB_POS_KEY, JSON.stringify(d.next))
+    }
+  }
+
+  // Esc 关闭聊天窗;进入 AI 助手页时收起(那边就是完整聊天界面)
+  useEffect(() => {
+    if (!fabChatOpen) return
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setFabChatOpen(false)
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [fabChatOpen])
+
+  useEffect(() => {
+    if (view === 'ai') setFabChatOpen(false)
+  }, [view])
+
+  // 窗口缩小后把悬浮球拉回视口内(仅视觉钳制,不覆盖记住的位置,放大窗口后原位仍在)
+  useEffect(() => {
+    const onResize = () => setFabPos((p) => (p ? clampFab(p) : p))
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+    // clampFab 每次渲染重建,但行为只依赖常量与当时的窗口尺寸,无需进依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // 布局持久化
   useEffect(() => {
@@ -281,6 +443,7 @@ export default function App() {
     { id: 'search-notes', label: '搜索笔记', hint: '/', run: () => { setView('notes'); emit('workbench:focus-search') } },
     { id: 'timer-toggle', label: '开始 / 暂停番茄钟', hint: 'P', run: () => { setView('focus'); emit('workbench:timer-toggle') } },
     { id: 'timer-reset', label: '重置番茄钟', run: () => emit('workbench:timer-reset') },
+    { id: 'ask-ai', label: '询问 AI 助手', run: () => { setView('ai'); setTimeout(() => emit('workbench:ai-focus'), 0) } },
     { id: 'export', label: '导出全部数据', run: handleExport },
   ]
 
@@ -303,6 +466,14 @@ export default function App() {
         body: JSON.stringify(payload),
       })
       if (!res.ok) throw new Error(await res.text())
+      // 服务端已被导入数据覆盖:作废未落盘的防抖保存与失败重试,
+      // 避免竞态下旧数据被写回、保存状态灯闪错
+      failedKeys.current.clear()
+      for (const t of Object.values(timers.current)) clearTimeout(t)
+      timers.current = {}
+      for (const t of Object.values(retryTimers.current)) clearTimeout(t)
+      retryTimers.current = {}
+      retryCount.current = {}
       await load()
       setSaveState('saved')
     } catch {
@@ -440,16 +611,48 @@ export default function App() {
           <div className="hello">
             <h1>
               <span className="tilde">~/</span>
-              {greeting}
+              {editingName ? (
+                <input
+                  ref={nameInputRef}
+                  className="name-edit"
+                  value={nameDraft}
+                  placeholder="名字(留空则不显示)"
+                  maxLength={20}
+                  onChange={(e) => setNameDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') saveName()
+                    if (e.key === 'Escape') setEditingName(false)
+                  }}
+                  onBlur={saveName}
+                />
+              ) : (
+                <>
+                  {greeting}
+                  {name && `,${name}`}
+                  <button className="name-edit-btn" title="设置名字" onClick={startEditName}>
+                    ✎
+                  </button>
+                </>
+              )}
             </h1>
             <p>{dateText}</p>
           </div>
+
+          <LinksBar links={data.links} update={update} />
+
           <div className="top-right">
             {view === 'overview' && (
               <button className="kbd-hint" onClick={resetLayout} title="恢复默认布局">
                 重置布局
               </button>
             )}
+            <button
+              className="kbd-hint"
+              onClick={() => setStartPageOpen(true)}
+              title="把个人工作台设为浏览器开始页"
+            >
+              设为开始页
+            </button>
             <button
               className="kbd-hint"
               onClick={() => setPaletteOpen(true)}
@@ -469,6 +672,8 @@ export default function App() {
             pomo: <PomodoroPanel pomodoros={data.pomodoros} update={update} />,
             hab: <HabitsPanel habits={data.habits} update={update} />,
             keys: <ShortcutsPanel onOpenPalette={() => setPaletteOpen(true)} />,
+            ai: <AiPanel data={data} update={update} onNavigate={setView} />,
+            report: <ReportPanel data={data} />,
           }
           // 各视图的行结构;总览固定两行三列(槽位由用户互换),其余面板保持挂载(隐藏)
           const overviewRows: Rows = [slots.slice(0, 3), slots.slice(3, 6)]
@@ -478,6 +683,8 @@ export default function App() {
             notes: [['notes']],
             focus: [['pomo', 'cal']],
             habits: [['hab']],
+            ai: [['ai']],
+            report: [['report']],
           }
           const viewRows = VIEW_ROWS[view]
           const inView = new Set(viewRows.flat())
@@ -544,9 +751,46 @@ export default function App() {
             </div>
           )
         })()}
+
+        {/* 右下角:AI 助手快捷入口,除 AI 助手页外常驻;可拖动,点击弹出就地聊天窗 */}
+        {view !== 'ai' && (
+          <button
+            ref={fabRef}
+            className={`ai-fab ${fabDragging ? 'dragging' : ''}`}
+            style={fabPos ?? undefined}
+            title="AI 助手 · 拖动可换位置"
+            onPointerDown={onFabPointerDown}
+            onPointerMove={onFabPointerMove}
+            onPointerUp={endFabDrag}
+            onPointerCancel={endFabDrag}
+            onClick={() => {
+              if (fabMoved.current) {
+                fabMoved.current = false
+                return
+              }
+              toggleFabChat()
+            }}
+          >
+            <IconAi />
+          </button>
+        )}
+
+        {view !== 'ai' && fabChatOpen && (
+          <div className="ai-pop" style={fabChatPos ?? undefined}>
+            <AiPanel
+              data={data}
+              update={update}
+              onNavigate={setView}
+              onClose={() => setFabChatOpen(false)}
+              autoFocus
+            />
+          </div>
+        )}
       </main>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />
+
+      {startPageOpen && <StartPageModal onClose={() => setStartPageOpen(false)} />}
     </div>
   )
 }
