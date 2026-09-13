@@ -116,16 +116,20 @@ export default function App() {
   const FAB_SIZE = 52
   const FAB_MARGIN = 8
 
-  const clampFab = (p: { right: number; bottom: number }) => ({
-    right: Math.min(
-      Math.max(Math.round(p.right), FAB_MARGIN),
-      Math.max(window.innerWidth - FAB_SIZE - FAB_MARGIN, FAB_MARGIN),
-    ),
-    bottom: Math.min(
-      Math.max(Math.round(p.bottom), FAB_MARGIN),
-      Math.max(window.innerHeight - FAB_SIZE - FAB_MARGIN, FAB_MARGIN),
-    ),
-  })
+  const clampFab = (p: { right: number; bottom: number }) => {
+    // 手机端底部有图标导航栏,悬浮球拖动时最低不压到它
+    const navReserve = window.matchMedia('(max-width: 640px)').matches ? 64 : 0
+    return {
+      right: Math.min(
+        Math.max(Math.round(p.right), FAB_MARGIN),
+        Math.max(window.innerWidth - FAB_SIZE - FAB_MARGIN, FAB_MARGIN),
+      ),
+      bottom: Math.min(
+        Math.max(Math.round(p.bottom), FAB_MARGIN),
+        Math.max(window.innerHeight - FAB_SIZE - FAB_MARGIN - navReserve, FAB_MARGIN),
+      ),
+    }
+  }
 
   const [fabPos, setFabPos] = useState<{ right: number; bottom: number } | null>(() => {
     try {

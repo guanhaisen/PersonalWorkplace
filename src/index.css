@@ -2766,13 +2766,29 @@ kbd {
     display: none;
   }
 
-  /* 侧栏:粘性顶栏,导航横滑 */
+  /* 顶栏只留品牌与导出/导入,导航移至底部图标栏 */
   .sidebar {
     position: sticky;
     top: 0;
     z-index: 40;
-    padding: 8px 10px;
-    gap: 6px;
+    padding: 8px 12px;
+    gap: 0;
+  }
+
+  .sidebar.collapsed {
+    flex: none;
+    width: auto;
+    padding: 8px 12px;
+  }
+
+  .sidebar.collapsed .brand-name,
+  .sidebar.collapsed .data-links {
+    display: revert;
+  }
+
+  .sidebar.collapsed .nav-item {
+    width: auto;
+    margin: 0;
   }
 
   .brand {
@@ -2784,25 +2800,6 @@ kbd {
     font-size: 13px;
   }
 
-  .nav {
-    flex: 1;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    min-width: 0;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-  }
-
-  .nav::-webkit-scrollbar {
-    display: none;
-  }
-
-  .nav-item {
-    flex: none;
-    height: 32px;
-    padding: 0 9px;
-  }
-
   .sidebar-foot {
     flex: none;
   }
@@ -2812,9 +2809,45 @@ kbd {
     display: none;
   }
 
-  /* 内容与卡片:收窄留白,单列堆叠(行内联网格用 !important 覆盖) */
+  /* 底部图标导航:7 项均分,只留图标 */
+  .nav {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 46;
+    flex: none;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    justify-content: space-around;
+    gap: 0;
+    padding: 4px 6px calc(4px + env(safe-area-inset-bottom));
+    background: var(--paper-2);
+    border-top: 1px solid var(--line);
+  }
+
+  .nav-item {
+    flex: 1;
+    min-width: 0;
+    height: 46px;
+    justify-content: center;
+    gap: 0;
+    padding: 0;
+  }
+
+  .nav-item .no,
+  .nav-item .lab {
+    display: none;
+  }
+
+  .nav-item svg {
+    width: 21px;
+    height: 21px;
+  }
+
+  /* 内容与卡片:收窄留白,单列堆叠;底部给导航栏留出空间 */
   .content {
-    padding: 14px 12px 40px;
+    padding: 14px 12px calc(78px + env(safe-area-inset-bottom));
   }
 
   .panel {
@@ -2833,6 +2866,11 @@ kbd {
   /* 卡片拖拽互换依赖 HTML5 拖放,触屏不可用,隐藏悬浮工具条 */
   .layout-tools {
     display: none;
+  }
+
+  /* AI 悬浮球默认位置抬高,不压住底部导航 */
+  .ai-fab {
+    bottom: calc(74px + env(safe-area-inset-bottom));
   }
 
   .day {
@@ -2856,18 +2894,8 @@ kbd {
   select {
     font-size: 16px;
   }
-}
 
-/* 触屏没有 hover:原本悬停才出现的操作改为常显 */
-@media (hover: none) {
-  .head-link-x,
-  .name-edit-btn {
-    opacity: 1;
-  }
-}
-
-/* 窄卡片下面板头允许换行(周报日期范围等不再被截断) */
-@media (max-width: 640px) {
+  /* 面板头允许换行(周报日期范围等不再被截断) */
   .p-head {
     flex-wrap: wrap;
     row-gap: 4px;
@@ -2875,5 +2903,13 @@ kbd {
 
   .p-head > .week-nav {
     margin-left: auto;
+  }
+}
+
+/* 触屏没有 hover:原本悬停才出现的操作改为常显 */
+@media (hover: none) {
+  .head-link-x,
+  .name-edit-btn {
+    opacity: 1;
   }
 }
