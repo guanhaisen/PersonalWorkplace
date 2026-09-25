@@ -451,6 +451,18 @@ textarea::placeholder {
   background: var(--card);
   padding: 3px 5px 3px 12px;
   flex: none;
+  transition: transform 0.16s ease, border-color 0.15s ease;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 长按拖动中的收藏:悬浮跟随,压过其他药丸 */
+.head-link.link-dragging {
+  position: relative;
+  z-index: 5;
+  transition: none;
+  border-color: var(--accent);
+  box-shadow: 0 10px 26px rgba(16, 24, 40, 0.18);
 }
 
 .head-link a {
