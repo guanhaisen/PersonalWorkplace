@@ -68,18 +68,6 @@ export function IconHabit() {
   )
 }
 
-/** 优先级三格信号条:高=全亮,中=两格,低=一格 */
-export function IconFlag({ level }: { level: 'high' | 'mid' | 'low' }) {
-  const color = level === 'high' ? '#0F766E' : level === 'mid' ? '#7C8883' : '#B4BCB6'
-  return (
-    <svg width="11" height="12" viewBox="0 0 11 12" fill={color} aria-hidden="true">
-      <rect x="0" y="7.5" width="2.4" height="4.5" rx="1" opacity={level === 'low' ? 0.35 : 1} />
-      <rect x="4.3" y="4" width="2.4" height="8" rx="1" opacity={level === 'low' ? 0.35 : 1} />
-      <rect x="8.6" y="0.5" width="2.4" height="11.5" rx="1" />
-    </svg>
-  )
-}
-
 export function IconCheck() {
   return (
     <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">

@@ -1,10 +1,7 @@
-export type Priority = 'high' | 'mid' | 'low'
-
 export interface Todo {
   id: string
   title: string
   done: boolean
-  priority: Priority
   /** 截止日期,格式 YYYY-MM-DD,可选 */
   dueDate?: string
   createdAt: string

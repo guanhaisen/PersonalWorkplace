@@ -685,7 +685,6 @@ textarea::placeholder {
 
   .board-row {
     flex: none;
-    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
     gap: 12px;
   }
 
@@ -1110,16 +1109,6 @@ textarea::placeholder {
   color: var(--muted);
 }
 
-.prio {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.prio svg {
-  display: block;
-}
-
 .sep {
   color: #b4bcb6;
 }
@@ -1167,10 +1156,6 @@ textarea::placeholder {
 
 .add-row2 .spacer {
   flex: 1;
-}
-
-.select-field {
-  cursor: pointer;
 }
 
 .date-field {
@@ -1623,6 +1608,11 @@ textarea::placeholder {
 
 .habit-head {
   padding: 0 2px 6px;
+  /* 在滚动容器内吸顶,条目从下方滚过时保持可见 */
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--card);
 }
 
 .hlabel {
@@ -1695,12 +1685,31 @@ textarea::placeholder {
 }
 
 .habit-line .name {
+  font: inherit;
+  color: var(--ink);
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 6px;
   font-size: 13.5px;
   font-weight: 500;
-  white-space: nowrap;
+  line-height: 1.35;
+  max-height: 2.7em; /* 最多两行,超出部分隐藏 */
   overflow: hidden;
-  text-overflow: ellipsis;
-  padding-right: 4px;
+  word-break: break-word;
+  padding: 0 4px 0 0;
+  transition: color 0.15s ease;
+}
+
+/* 实际溢出才渐隐(第二行向下淡出),短名不受影响 */
+.habit-line .name.clamped {
+  -webkit-mask-image: linear-gradient(180deg, #000 50%, transparent 97%);
+  mask-image: linear-gradient(180deg, #000 50%, transparent 97%);
+}
+
+.habit-line .name:hover {
+  color: var(--accent-deep);
 }
 
 .dot-cell {
@@ -1777,6 +1786,148 @@ textarea::placeholder {
 
 .habit-del:hover {
   color: var(--red);
+  background: var(--red-tint);
+}
+
+/* 习惯详情弹窗卡片 */
+
+.hb-modal {
+  width: 400px;
+  max-width: calc(100vw - 40px);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 24px 64px rgba(16, 24, 40, 0.18);
+  padding: 18px 20px 20px;
+}
+
+.hb-name-edit {
+  width: 100%;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  background: transparent;
+  border: none;
+  border-bottom: 2px dashed var(--accent-soft);
+  outline: none;
+  padding: 2px 2px 6px;
+  margin-bottom: 14px;
+}
+
+.hb-name-edit::placeholder {
+  color: #b4bcb6;
+}
+
+.hb-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.hb-stat {
+  background: var(--accent-tint);
+  border-radius: 9px;
+  padding: 10px 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.hb-stat b {
+  font-family: var(--mono);
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--accent-deep);
+}
+
+.hb-stat span {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.hb-cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.hb-wd-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  margin-bottom: 2px;
+}
+
+.hb-wd-row span {
+  font-size: 11px;
+  color: var(--text-3);
+  text-align: center;
+  padding: 2px 0;
+}
+
+.hb-cal {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+}
+
+.hb-day {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  padding: 0;
+  border-radius: 7px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.hb-day:not(:disabled):not(.on):hover {
+  background: var(--accent-tint);
+  color: var(--accent-deep);
+}
+
+.hb-day.on {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.hb-day.on:not(:disabled):hover {
+  background: var(--accent-deep);
+}
+
+.hb-day.today {
+  box-shadow: inset 0 0 0 2px var(--accent-deep);
+}
+
+.hb-day:disabled {
+  color: #c6ccc6;
+  cursor: default;
+}
+
+.hb-foot {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 16px;
+}
+
+.btn.danger {
+  border: 1px solid var(--line);
+  color: var(--red);
+  background: var(--card);
+}
+
+.btn.danger:hover {
+  border-color: #e4c4bd;
   background: var(--red-tint);
 }
 

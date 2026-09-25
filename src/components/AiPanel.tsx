@@ -99,11 +99,6 @@ export default function AiPanel({ data, update, onNavigate, onClose, autoFocus }
       case 'add_todo': {
         const title = str(args.title)
         if (!title) return { ok: false, error: 'title 为空' }
-        const rawPriority = str(args.priority)
-        const priority = (['high', 'mid', 'low'].includes(rawPriority) ? rawPriority : 'low') as
-          | 'high'
-          | 'mid'
-          | 'low'
         const todoId = uid()
         applyToolUpdate('todos', (items) => [
           ...items,
@@ -111,7 +106,6 @@ export default function AiPanel({ data, update, onNavigate, onClose, autoFocus }
             id: todoId,
             title,
             done: false,
-            priority,
             dueDate: str(args.dueDate) || undefined,
             createdAt: nowIso(),
           },

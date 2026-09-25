@@ -1,10 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Priority, Todo } from '../types'
+import type { Todo } from '../types'
 import { todayStr, uid } from '../api'
 import type { UpdateFn } from '../App'
-import { IconCheck, IconFlag } from './icons'
-
-const PRIORITY_LABEL: Record<Priority, string> = { high: '高', mid: '中', low: '低' }
+import { IconCheck } from './icons'
 
 type Filter = 'active' | 'overdue' | 'done' | 'all'
 
@@ -25,7 +23,6 @@ function dueText(dueDate: string, today: string): string {
 
 export default function TodoPanel({ todos, update }: Props) {
   const [text, setText] = useState('')
-  const [priority, setPriority] = useState<Priority>('mid')
   const [dueDate, setDueDate] = useState('')
   const [filter, setFilter] = useState<Filter>('active')
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -77,7 +74,6 @@ export default function TodoPanel({ todos, update }: Props) {
       id: uid(),
       title,
       done: false,
-      priority,
       dueDate: dueDate || undefined,
       createdAt: new Date().toISOString(),
     }
@@ -224,13 +220,8 @@ export default function TodoPanel({ todos, update }: Props) {
                   </div>
                 )}
                 <div className="task-mt">
-                  <span className="prio">
-                    <IconFlag level={t.priority} />
-                    {PRIORITY_LABEL[t.priority]}
-                  </span>
                   {t.dueDate && (
                     <>
-                      <span className="sep">·</span>
                       <span className="due">
                         截止{' '}
                         <b className={`chip ${overdue ? 'overdue' : t.dueDate === today ? 'hot' : ''}`}>
@@ -265,18 +256,6 @@ export default function TodoPanel({ todos, update }: Props) {
           onKeyDown={(e) => e.key === 'Enter' && add()}
         />
         <div className="add-row2">
-          <select
-            className="field select-field"
-            value={priority}
-            onChange={(e) => setPriority(e.target.value as Priority)}
-            title="优先级"
-          >
-            {(['high', 'mid', 'low'] as Priority[]).map((p) => (
-              <option key={p} value={p}>
-                优先级 · {PRIORITY_LABEL[p]}
-              </option>
-            ))}
-          </select>
           <input
             className="field date-field"
             type="date"

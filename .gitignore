@@ -3,3 +3,5 @@ dist/
 .zcode/
 design-demos/
 data/
+.deploy/
+

@@ -1,18 +1,47 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Habit } from '../types'
 import { streak, todayStr, uid } from '../api'
 import type { UpdateFn } from '../App'
 import { IconCheck } from './icons'
+import HabitDetailCard from './HabitDetailCard'
 
 interface Props {
   habits: Habit[]
   update: UpdateFn
 }
 
+// 名称最多两行,溢出时加渐隐遮罩暗示内容未完(全文见悬停提示与详情卡);不溢出则不加,避免短名被误遮
+function ClampedName({ text, onOpen }: { text: string; onOpen: () => void }) {
+  const ref = useRef<HTMLButtonElement>(null)
+  const [clamped, setClamped] = useState(false)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const check = () => setClamped(el.scrollHeight > el.clientHeight + 1)
+    check()
+    const ro = new ResizeObserver(check)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [text])
+
+  return (
+    <button
+      ref={ref}
+      className={`name ${clamped ? 'clamped' : ''}`}
+      title={`${text} · 点击查看详情`}
+      onClick={onOpen}
+    >
+      {text}
+    </button>
+  )
+}
+
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
 
 export default function HabitsPanel({ habits, update }: Props) {
   const [name, setName] = useState('')
+  const [openId, setOpenId] = useState<string | null>(null)
 
   // 最近 7 天(含今天)的日期与星期标签
   const last7 = useMemo(() => {
@@ -26,6 +55,7 @@ export default function HabitsPanel({ habits, update }: Props) {
   }, [])
 
   const today = todayStr()
+  const openHabit = habits.find((h) => h.id === openId)
 
   const add = () => {
     const n = name.trim()
@@ -58,17 +88,20 @@ export default function HabitsPanel({ habits, update }: Props) {
         <span className="p-meta">最近 7 天</span>
       </header>
 
-      <div className="habit-grid habit-head">
-        <span className="hlabel">今</span>
-        {last7.map((d) => (
-          <span key={d.date} className={`hd ${d.date === today ? 'today' : ''}`}>
-            {d.label}
-          </span>
-        ))}
-        <span className="hs">连续</span>
-      </div>
-
       <div className="habit-list">
+        {/* 表头放进滚动容器并吸顶:与条目行共用同一宽度,有滚动条也对齐 */}
+        <div className="habit-grid habit-head">
+          <span className="hlabel">今</span>
+          {/* 占住名称列,让星期标签与下方圆点列一一对齐 */}
+          <span aria-hidden />
+          {last7.map((d) => (
+            <span key={d.date} className={`hd ${d.date === today ? 'today' : ''}`}>
+              {d.label}
+            </span>
+          ))}
+          <span className="hs">连续</span>
+        </div>
+
         {habits.map((h) => {
           const s = streak(h.records)
           const doneToday = !!h.records[today]
@@ -81,9 +114,7 @@ export default function HabitsPanel({ habits, update }: Props) {
               >
                 {doneToday && <IconCheck />}
               </button>
-              <span className="name" title={h.name}>
-                {h.name}
-              </span>
+              <ClampedName text={h.name} onOpen={() => setOpenId(h.id)} />
               {last7.map((d) => (
                 <button
                   key={d.date}
@@ -116,6 +147,15 @@ export default function HabitsPanel({ habits, update }: Props) {
           添加
         </button>
       </div>
+
+      {openHabit && (
+        <HabitDetailCard
+          key={openHabit.id}
+          habit={openHabit}
+          update={update}
+          onClose={() => setOpenId(null)}
+        />
+      )}
     </div>
   )
 }

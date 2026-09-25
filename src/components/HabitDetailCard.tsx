@@ -1,0 +1,167 @@
+import { useEffect, useMemo, useState } from 'react'
+import type { Habit } from '../types'
+import type { UpdateFn } from '../App'
+import { streak, todayStr } from '../api'
+
+interface Props {
+  habit: Habit
+  update: UpdateFn
+  onClose: () => void
+}
+
+const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'] // 周一开头
+
+export default function HabitDetailCard({ habit, update, onClose }: Props) {
+  const [draft, setDraft] = useState(habit.name)
+  const [cursor, setCursor] = useState(() => {
+    const t = new Date()
+    return { year: t.getFullYear(), month: t.getMonth() }
+  })
+  const today = todayStr()
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  const patch = (fn: (h: Habit) => Habit) =>
+    update('habits', (items) => items.map((h) => (h.id === habit.id ? fn(h) : h)))
+
+  const setRecord = (day: string) =>
+    patch((h) => {
+      const records = { ...h.records }
+      if (records[day]) delete records[day]
+      else records[day] = true
+      return { ...h, records }
+    })
+
+  const rename = () => {
+    const n = draft.trim()
+    if (!n) {
+      setDraft(habit.name)
+      return
+    }
+    if (n !== habit.name) patch((h) => ({ ...h, name: n }))
+  }
+
+  // 近 30 天完成率
+  const rate = useMemo(() => {
+    let hit = 0
+    for (let i = 0; i < 30; i++) {
+      const d = new Date()
+      d.setDate(d.getDate() - i)
+      if (habit.records[todayStr(d)]) hit++
+    }
+    return Math.round((hit / 30) * 100)
+  }, [habit.records])
+
+  const total = Object.keys(habit.records).length
+
+  const { cells } = useMemo(() => {
+    const { year, month } = cursor
+    const first = new Date(year, month, 1)
+    const leading = (first.getDay() + 6) % 7 // 周一为第 0 列
+    const dayCount = new Date(year, month + 1, 0).getDate()
+    const list: (number | null)[] = Array.from({ length: leading }, () => null)
+    for (let d = 1; d <= dayCount; d++) list.push(d)
+    while (list.length % 7 !== 0) list.push(null)
+    return { cells: list }
+  }, [cursor])
+
+  const move = (delta: number) =>
+    setCursor(({ year, month }) => {
+      const d = new Date(year, month + delta, 1)
+      return { year: d.getFullYear(), month: d.getMonth() }
+    })
+
+  const del = () => {
+    update('habits', (items) => items.filter((h) => h.id !== habit.id))
+    onClose()
+  }
+
+  return (
+    <div className="cmd-overlay" onMouseDown={onClose}>
+      <div className="hb-modal" onMouseDown={(e) => e.stopPropagation()}>
+        <header className="p-head">
+          <h2>
+            <span className="tag">HABIT</span>
+            <i>/</i>习惯详情
+          </h2>
+          <span className="p-meta">创建于 {habit.createdAt.slice(0, 10)}</span>
+        </header>
+
+        <input
+          className="hb-name-edit"
+          value={draft}
+          placeholder="习惯名称"
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={rename}
+          onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+        />
+
+        <div className="hb-stats">
+          <div className="hb-stat">
+            <b>{streak(habit.records)}</b>
+            <span>连续天数</span>
+          </div>
+          <div className="hb-stat">
+            <b>{total}</b>
+            <span>累计打卡</span>
+          </div>
+          <div className="hb-stat">
+            <b>{rate}%</b>
+            <span>近 30 天</span>
+          </div>
+        </div>
+
+        <div className="hb-cal-head">
+          <button className="cal-btn" onClick={() => move(-1)} title="上个月">
+            ‹
+          </button>
+          <span className="p-meta">
+            {cursor.year} 年 {cursor.month + 1} 月
+          </span>
+          <button className="cal-btn" onClick={() => move(1)} title="下个月">
+            ›
+          </button>
+        </div>
+
+        <div className="hb-wd-row">
+          {WEEKDAYS.map((w) => (
+            <span key={w}>{w}</span>
+          ))}
+        </div>
+
+        <div className="hb-cal">
+          {cells.map((d, i) => {
+            if (d === null) return <span key={i} />
+            const key = `${cursor.year}-${String(cursor.month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+            const future = key > today
+            const on = !!habit.records[key]
+            return (
+              <button
+                key={i}
+                className={`hb-day ${on ? 'on' : ''} ${key === today ? 'today' : ''}`}
+                disabled={future}
+                title={future ? key : `${key} · ${on ? '已打卡,点击取消' : '未打卡,点击补卡'}`}
+                onClick={() => setRecord(key)}
+              >
+                {d}
+              </button>
+            )
+          })}
+        </div>
+
+        <footer className="hb-foot">
+          <button className="btn ghost danger" onClick={del}>
+            删除习惯
+          </button>
+          <button className="btn solid" onClick={onClose}>
+            完成
+          </button>
+        </footer>
+      </div>
+    </div>
+  )
+}

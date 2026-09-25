@@ -88,7 +88,6 @@ export const AI_TOOLS = [
     type: 'function',
     function: fn('add_todo', '新建一条待办任务', {
       title: { type: 'string', description: '任务内容' },
-      priority: { type: 'string', enum: ['high', 'mid', 'low'], description: '优先级,默认 low' },
       dueDate: { type: 'string', description: '截止日期 YYYY-MM-DD,可选' },
     }, ['title']),
   },
@@ -145,7 +144,7 @@ export function buildDataSnapshot(data: AppData): string {
   lines.push(`[待办] 共 ${data.todos.length} 条,未完成 ${undone} 条`)
   for (const t of data.todos.slice(0, 80)) {
     const marks = [
-      t.done ? '已完成' : `优先级${t.priority}`,
+      t.done ? '已完成' : '进行中',
       t.dueDate ? `截止 ${t.dueDate}` : '',
     ]
       .filter(Boolean)
