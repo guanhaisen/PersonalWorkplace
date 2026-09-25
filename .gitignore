@@ -4,4 +4,6 @@ dist/
 design-demos/
 data/
 .deploy/
+.workbuddy/
+.wbapp_*.genie
 
