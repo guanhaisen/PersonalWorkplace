@@ -11,8 +11,8 @@ const PORT = process.env.PORT || 3001
 // 默认只监听本机,局域网设备不可达;确需开放时启动前设 HOST=0.0.0.0
 const HOST = process.env.HOST || '127.0.0.1'
 
-const COLLECTIONS = ['todos', 'notes', 'habits', 'pomodoros', 'chats', 'links']
-const DEFAULTS = { todos: [], notes: [], habits: [], pomodoros: [], chats: [], links: [] }
+const COLLECTIONS = ['todos', 'courses', 'habits', 'chats', 'links']
+const DEFAULTS = { todos: [], courses: [], habits: [], chats: [], links: [] }
 const BACKUP_DIR = path.join(DATA_DIR, 'backups')
 const BACKUP_KEEP = 10 // 每个集合保留的最近备份数
 const BACKUP_MIN_GAP_MS = 60_000 // 距上次备份不足 1 分钟则跳过(防抖动写入刷屏)
@@ -121,6 +121,34 @@ app.post('/api/import', h(async (req, res) => {
   }
   for (const name of provided) await writeCollection(name, body[name])
   res.json({ ok: true })
+}))
+
+// ---------- 通用设置:学期开始等需要跨浏览器同步的小配置 ----------
+const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json')
+
+async function readSettings() {
+  try {
+    return JSON.parse(await fs.readFile(SETTINGS_FILE, 'utf-8'))
+  } catch {
+    return {}
+  }
+}
+
+app.get('/api/settings', h(async (_req, res) => {
+  res.json(await readSettings())
+}))
+
+app.put('/api/settings', h(async (req, res) => {
+  const body = req.body || {}
+  if (typeof body !== 'object' || Array.isArray(body)) {
+    res.status(400).json({ error: 'expected a JSON object' })
+    return
+  }
+  const merged = { ...(await readSettings()), ...body }
+  const tmp = `${SETTINGS_FILE}.tmp`
+  await fs.writeFile(tmp, JSON.stringify(merged, null, 2), 'utf-8')
+  await renameWithRetry(tmp, SETTINGS_FILE)
+  res.json(merged)
 }))
 
 // ---------- AI 助手:配置存 data/ai-config.json(gitignore,含密钥) ----------

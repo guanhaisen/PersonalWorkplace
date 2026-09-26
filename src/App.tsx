@@ -2,16 +2,15 @@ import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'reac
 import type { AppData } from './types'
 import { loadAll, saveCollection, type CollectionKey } from './api'
 import TodoPanel from './components/TodoPanel'
-import NotesPanel from './components/NotesPanel'
 import CalendarPanel from './components/CalendarPanel'
-import PomodoroPanel from './components/PomodoroPanel'
+import SchedulePanel from './components/SchedulePanel'
 import HabitsPanel from './components/HabitsPanel'
 import ShortcutsPanel from './components/ShortcutsPanel'
 import AiPanel from './components/AiPanel'
 import ReportPanel from './components/ReportPanel'
 import LinksBar from './components/LinksBar'
 import StartPageModal from './components/StartPageModal'
-import { BrandMark, IconAi, IconCalendar, IconGitHub, IconGrip, IconHabit, IconKeys, IconNote, IconOverview, IconReport, IconTimer, IconTodo } from './components/icons'
+import { BrandMark, IconAi, IconCalendar, IconGitHub, IconGrip, IconHabit, IconKeys, IconOverview, IconReport, IconSchedule, IconTodo } from './components/icons'
 import CommandPalette, { type Command } from './components/CommandPalette'
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
@@ -21,33 +20,44 @@ export type UpdateFn = <K extends CollectionKey>(
   updater: (items: AppData[K]) => AppData[K],
 ) => void
 
-export type ViewKey = 'overview' | 'todos' | 'notes' | 'focus' | 'habits' | 'ai' | 'report'
+export type ViewKey = 'overview' | 'todos' | 'schedule' | 'habits' | 'ai' | 'report'
 
-// ---------- 总览布局:严格两行三列,拖拽互换 ----------
+// ---------- 总览布局:两行卡槽,拖拽互换 ----------
 
-type PanelId = 'todo' | 'notes' | 'cal' | 'pomo' | 'hab' | 'keys' | 'ai' | 'report'
+type PanelId = 'todo' | 'schedule' | 'cal' | 'hab' | 'keys' | 'ai' | 'report'
 type Rows = PanelId[][]
 
-// 总览可放置的 6 张卡;ai / report 面板常驻挂载但不进总览槽位
-const SLOT_IDS: PanelId[] = ['todo', 'notes', 'cal', 'pomo', 'hab', 'keys']
+// 总览可放置的 5 张卡:课表卡固定占两列,其余单列;ai / report 面板常驻挂载但不进总览槽位
+const SLOT_IDS: PanelId[] = ['todo', 'schedule', 'cal', 'hab', 'keys']
 const PANEL_IDS: PanelId[] = [...SLOT_IDS, 'ai', 'report']
-const LAYOUT_KEY = 'overview.layout.v3'
+const LAYOUT_KEY = 'overview.layout.v4'
 
-const DEFAULT_SLOTS: PanelId[] = ['todo', 'notes', 'pomo', 'cal', 'hab', 'keys']
+const DEFAULT_SLOTS: PanelId[] = ['todo', 'hab', 'cal', 'schedule', 'keys']
+
+// 课表卡的合法槽位为 0/1(上行宽位)或 3/4(下行宽位);落到行边界 2 时与后一位交换
+function normalizeSlots(arr: PanelId[]): PanelId[] {
+  const w = arr.indexOf('schedule')
+  if (w === 2) {
+    const fixed = [...arr]
+    ;[fixed[2], fixed[3]] = [fixed[3], fixed[2]]
+    return fixed
+  }
+  return arr
+}
 
 function loadSlots(): PanelId[] {
   try {
-    for (const key of [LAYOUT_KEY, 'overview.layout.v2']) {
-      const raw = localStorage.getItem(key)
-      if (!raw) continue
+    const raw = localStorage.getItem(LAYOUT_KEY)
+    if (raw) {
       const parsed = JSON.parse(raw)
-      // v3 是六元素槽位数组;v2 是行数组,拍平兼容
-      const flat = Array.isArray(parsed) && Array.isArray(parsed[0]) ? parsed.flat() : parsed
-      if (!Array.isArray(flat)) continue
-      const ids = flat.filter(
-        (id: PanelId, i: number) => SLOT_IDS.includes(id) && flat.indexOf(id) === i,
-      )
-      if (ids.length === SLOT_IDS.length) return ids as PanelId[]
+      if (Array.isArray(parsed)) {
+        const ids = parsed.filter(
+          (id: PanelId, i: number) => SLOT_IDS.includes(id) && parsed.indexOf(id) === i,
+        )
+        // 旧存档缺槽位时补齐到末尾,避免重置用户已排好的顺序
+        for (const id of SLOT_IDS) if (!ids.includes(id)) ids.push(id)
+        if (ids.length === SLOT_IDS.length) return normalizeSlots(ids as PanelId[])
+      }
     }
   } catch {
     // 忽略损坏的存档
@@ -58,8 +68,7 @@ function loadSlots(): PanelId[] {
 const NAV_META: Record<ViewKey, { label: string; icon: JSX.Element }> = {
   overview: { label: '总览', icon: <IconOverview /> },
   todos: { label: '待办', icon: <IconTodo /> },
-  notes: { label: '笔记', icon: <IconNote /> },
-  focus: { label: '专注', icon: <IconTimer /> },
+  schedule: { label: '课表', icon: <IconSchedule /> },
   habits: { label: '习惯', icon: <IconHabit /> },
   ai: { label: 'AI 助手', icon: <IconAi /> },
   report: { label: '周报', icon: <IconReport /> },
@@ -68,9 +77,8 @@ const NAV_META: Record<ViewKey, { label: string; icon: JSX.Element }> = {
 // 手机端总览的胶囊头:卡片折叠为胶囊,点开一张、收起其余
 const CAPSULE_META: Record<PanelId, { label: string; icon: JSX.Element }> = {
   todo: { label: '待办任务', icon: <IconTodo /> },
-  notes: { label: '笔记', icon: <IconNote /> },
+  schedule: { label: '课程表', icon: <IconSchedule /> },
   cal: { label: '日历', icon: <IconCalendar /> },
-  pomo: { label: '番茄钟', icon: <IconTimer /> },
   hab: { label: '习惯打卡', icon: <IconHabit /> },
   keys: { label: '快捷键', icon: <IconKeys /> },
   ai: { label: 'AI 助手', icon: <IconAi /> },
@@ -79,7 +87,7 @@ const CAPSULE_META: Record<PanelId, { label: string; icon: JSX.Element }> = {
 
 // 导航顺序可自由调整(拖拽),数字快捷键跟随位置
 const NAV_KEY = 'nav.order.v1'
-const DEFAULT_NAV: ViewKey[] = ['overview', 'todos', 'notes', 'focus', 'habits', 'ai', 'report']
+const DEFAULT_NAV: ViewKey[] = ['overview', 'todos', 'schedule', 'habits', 'ai', 'report']
 
 function loadNavOrder(): ViewKey[] {
   try {
@@ -119,7 +127,7 @@ export default function App() {
     () => localStorage.getItem('sidebar.collapsed') === '1',
   )
   const [dragPanel, setDragPanel] = useState<PanelId | null>(null)
-  const [dropTarget, setDropTarget] = useState<PanelId | null>(null)
+  const [dropTarget, setDropTarget] = useState<{ id: PanelId; pos: 'before' | 'after' } | null>(null)
   // 手机端总览:当前展开的胶囊对应卡片;null = 全部收起
   const [openCapsule, setOpenCapsule] = useState<PanelId | null>(null)
 
@@ -245,7 +253,8 @@ export default function App() {
         const arr = [...prev]
         const [moved] = arr.splice(fromIndex, 1)
         arr.splice(targetIndex, 0, moved)
-        return arr
+        // 课表卡不能落在两行边界(索引 2),否则失去宽位
+        return normalizeSlots(arr)
       })
     }
     const cells = d.cells ?? Array.from(document.querySelectorAll<HTMLElement>('.board .cell.has-cap'))
@@ -426,9 +435,74 @@ export default function App() {
     localStorage.setItem('sidebar.collapsed', sidebarCollapsed ? '1' : '0')
   }, [sidebarCollapsed])
 
-  // 严格 2×3:拖拽即互换两张卡片
-  const swapPanels = (a: PanelId, b: PanelId) =>
-    setSlots((prev) => prev.map((id) => (id === a ? b : id === b ? a : id)))
+  // 总览拖拽放置:课表卡固定占两列,拖动它 = 与目标位置的两张卡整块对调;
+  // 拖普通卡到课表上同理;普通卡之间直接互换
+  const applyDrop = (drag: PanelId, target: PanelId, pos: 'before' | 'after') => {
+    setSlots((prev) => {
+      if (drag === target) return prev
+      const w = prev.indexOf('schedule')
+      const di = prev.indexOf(drag)
+      const ti = prev.indexOf(target)
+      if (drag !== 'schedule' && target !== 'schedule') {
+        const arr = [...prev]
+        arr[di] = target
+        arr[ti] = drag
+        return arr
+      }
+      const dragIsWide = drag === 'schedule'
+      const sameRow = w <= 1 ? dragIsWide ? ti <= 1 : di <= 1 : dragIsWide ? ti >= 3 : di >= 3
+      if (sameRow) {
+        // 同行(课表与它的伙伴卡)互换,宽位跟随课表
+        const arr = [...prev]
+        arr[w] = target
+        arr[ti] = 'schedule'
+        return arr
+      }
+      return moveSchedule(prev, dragIsWide ? ti : di, pos)
+    })
+  }
+
+  // 把课表(宽卡)移到 targetIndex 所在行,覆盖包含目标卡的相邻两格;
+  // 被顶出的两张卡移到课表原来的两格,课表原同行伙伴保持列位置不变
+  const moveSchedule = (prev: PanelId[], targetIndex: number, pos: 'before' | 'after'): PanelId[] => {
+    const w = prev.indexOf('schedule')
+    const inTop = w <= 1
+    const partner = inTop ? prev[1 - w] : prev[w === 3 ? 4 : 3]
+    const three = inTop ? [prev[2], prev[3], prev[4]] : [prev[0], prev[1], prev[2]]
+    const t = inTop ? targetIndex - 2 : targetIndex
+    let pair: [PanelId, PanelId]
+    let remain: PanelId
+    if (t <= 0) {
+      pair = [three[0], three[1]]
+      remain = three[2]
+    } else if (t >= 2) {
+      pair = [three[1], three[2]]
+      remain = three[0]
+    } else if (pos === 'before') {
+      pair = [three[0], three[1]]
+      remain = three[2]
+    } else {
+      pair = [three[1], three[2]]
+      remain = three[0]
+    }
+    // 课表覆盖 pair 原来的两格(t=0 或中卡前半 → 左两格,否则右两格)
+    const scheduleLeft = t <= 0 || (t === 1 && pos === 'before')
+    const top: PanelId[] = inTop
+      ? w === 0
+        ? [pair[0], pair[1], partner]
+        : [partner, pair[0], pair[1]]
+      : scheduleLeft
+        ? ['schedule', remain]
+        : [remain, 'schedule']
+    const bottom: PanelId[] = inTop
+      ? scheduleLeft
+        ? ['schedule', remain]
+        : [remain, 'schedule']
+      : w === 3
+        ? [pair[0], pair[1], partner]
+        : [partner, pair[0], pair[1]]
+    return [...top, ...bottom]
+  }
 
   // 导航排序:src 插到 dst 前/后
   const moveNavItem = (src: ViewKey, dst: ViewKey, pos: 'before' | 'after') => {
@@ -557,21 +631,12 @@ export default function App() {
       }
       switch (e.key) {
         case 'n':
-          setView('notes')
-          emit('workbench:new-note')
+          setView('schedule')
+          emit('workbench:new-course')
           break
         case 't':
           setView('todos')
           emit('workbench:focus-todo-input')
-          break
-        case '/':
-          e.preventDefault()
-          setView('notes')
-          emit('workbench:focus-search')
-          break
-        case 'p':
-          setView('focus')
-          emit('workbench:timer-toggle')
           break
         case '?':
           setPaletteOpen(true)
@@ -589,11 +654,8 @@ export default function App() {
       hint: String(i + 1),
       run: () => setView(key),
     })),
-    { id: 'new-note', label: '新建笔记', hint: 'N', run: () => { setView('notes'); emit('workbench:new-note') } },
+    { id: 'new-course', label: '新建课程', hint: 'N', run: () => { setView('schedule'); emit('workbench:new-course') } },
     { id: 'new-todo', label: '新建待办', hint: 'T', run: () => { setView('todos'); emit('workbench:focus-todo-input') } },
-    { id: 'search-notes', label: '搜索笔记', hint: '/', run: () => { setView('notes'); emit('workbench:focus-search') } },
-    { id: 'timer-toggle', label: '开始 / 暂停番茄钟', hint: 'P', run: () => { setView('focus'); emit('workbench:timer-toggle') } },
-    { id: 'timer-reset', label: '重置番茄钟', run: () => emit('workbench:timer-reset') },
     { id: 'ask-ai', label: '询问 AI 助手', run: () => { setView('ai'); setTimeout(() => emit('workbench:ai-focus'), 0) } },
     { id: 'export', label: '导出全部数据', run: handleExport },
   ]
@@ -653,7 +715,7 @@ export default function App() {
   const dateComment = `// ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} · ${WEEKDAYS_EN[now.getDay()]}`
 
   // 所有面板只挂载一次,视图切换仅改 CSS 网格布局与可见性,
-  // 保证番茄钟计时等组件内部状态跨视图保留
+  // 保证各面板内部状态(筛选、草稿等)跨视图保留
   return (
     <div className="shell">
       <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
@@ -827,32 +889,36 @@ export default function App() {
         {(() => {
           const panelEls: Record<PanelId, JSX.Element> = {
             todo: <TodoPanel todos={data.todos} update={update} />,
-            notes: <NotesPanel notes={data.notes} update={update} />,
-            cal: <CalendarPanel pomodoros={data.pomodoros} habits={data.habits} />,
-            pomo: <PomodoroPanel pomodoros={data.pomodoros} update={update} />,
+            schedule: <SchedulePanel courses={data.courses} update={update} />,
+            cal: <CalendarPanel habits={data.habits} />,
             hab: <HabitsPanel habits={data.habits} update={update} />,
             keys: <ShortcutsPanel onOpenPalette={() => setPaletteOpen(true)} />,
             ai: <AiPanel data={data} update={update} onNavigate={setView} />,
             report: <ReportPanel data={data} />,
           }
-          // 各视图的行结构;总览固定两行三列(槽位由用户互换),其余面板保持挂载(隐藏)
-          const overviewRows: Rows = [slots.slice(0, 3), slots.slice(3, 6)]
-          const VIEW_ROWS: Record<ViewKey, Rows> = {
-            overview: overviewRows,
+          // 各视图的行结构;总览行结构随课表卡位置自适应,其余面板保持挂载(隐藏)
+          const w = slots.indexOf('schedule')
+          const overviewRows: Rows =
+            w <= 1
+              ? [[slots[0], slots[1]], [slots[2], slots[3], slots[4]]]
+              : [[slots[0], slots[1], slots[2]], [slots[3], slots[4]]]
+          const wideRowIdx = w <= 1 ? 0 : 1
+          const wideCellIdx = w <= 1 ? w : w - 3
+          const VIEW_ROWS: Record<Exclude<ViewKey, 'overview'>, Rows> = {
             todos: [['todo']],
-            notes: [['notes']],
-            focus: [['pomo', 'cal']],
+            schedule: [['schedule']],
             habits: [['hab']],
             ai: [['ai']],
             report: [['report']],
           }
-          const viewRows = VIEW_ROWS[view]
+          const isOverview = view === 'overview'
+          const viewRows: Rows = isOverview ? overviewRows : VIEW_ROWS[view]
           const inView = new Set(viewRows.flat())
           const hidden = PANEL_IDS.filter((id) => !inView.has(id))
 
-          const cellOf = (id: PanelId, withCapsule: boolean) => {
+          const cellOf = (id: PanelId, withCapsule: boolean, span2 = false) => {
             const isDragging = dragPanel === id
-            const isTarget = !!dropTarget && dropTarget === id && dragPanel !== null && dragPanel !== id
+            const isTarget = !!dropTarget && dropTarget.id === id && dragPanel !== null && dragPanel !== id
             const capOpen = withCapsule && openCapsule === id
             return (
               <div
@@ -860,20 +926,23 @@ export default function App() {
                 className={`cell cell-${id} ${withCapsule ? 'has-cap' : ''} ${capOpen ? 'cap-open' : ''} ${
                   isDragging ? 'dragging' : ''
                 } ${isTarget ? 'drop-target' : ''}`}
+                style={span2 ? { gridColumn: 'span 2' } : undefined}
                 onDragOver={(e) => {
                   if (!dragPanel || dragPanel === id) return
                   e.preventDefault()
                   e.dataTransfer.dropEffect = 'move'
-                  if (dropTarget !== id) setDropTarget(id)
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  const pos = e.clientX < rect.left + rect.width / 2 ? 'before' : 'after'
+                  if (dropTarget?.id !== id || dropTarget?.pos !== pos) setDropTarget({ id, pos })
                 }}
                 onDrop={(e) => {
                   e.preventDefault()
-                  if (dragPanel && dropTarget) swapPanels(dragPanel, dropTarget)
+                  if (dragPanel && dropTarget) applyDrop(dragPanel, dropTarget.id, dropTarget.pos)
                   setDragPanel(null)
                   setDropTarget(null)
                 }}
                 onDragLeave={(e) => {
-                  if (e.target === e.currentTarget && dropTarget === id) setDropTarget(null)
+                  if (e.target === e.currentTarget && dropTarget?.id === id) setDropTarget(null)
                 }}
               >
                 <div className="layout-tools">
@@ -929,9 +998,13 @@ export default function App() {
                 <div
                   key={ri}
                   className="board-row"
-                  style={{ gridTemplateColumns: `repeat(${row.length}, minmax(0, 1fr))` }}
+                  style={{
+                    gridTemplateColumns: isOverview
+                      ? 'repeat(3, minmax(0, 1fr))'
+                      : `repeat(${row.length}, minmax(0, 1fr))`,
+                  }}
                 >
-                  {row.map((id) => cellOf(id, view === 'overview'))}
+                  {row.map((id, ci) => cellOf(id, isOverview, isOverview && ri === wideRowIdx && ci === wideCellIdx))}
                 </div>
               ))}
               {hidden.length > 0 && <div style={{ display: 'none' }}>{hidden.map((id) => cellOf(id, false))}</div>}

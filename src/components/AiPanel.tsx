@@ -31,7 +31,7 @@ const PRESETS: { label: string; baseUrl: string; model: string }[] = [
   { label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
 ]
 
-const VIEWS: ViewKey[] = ['overview', 'todos', 'notes', 'focus', 'habits', 'ai']
+const VIEWS: ViewKey[] = ['overview', 'todos', 'schedule', 'habits', 'ai']
 const nowIso = () => new Date().toISOString()
 
 export default function AiPanel({ data, update, onNavigate, onClose, autoFocus }: Props) {
@@ -126,10 +126,33 @@ export default function AiPanel({ data, update, onNavigate, onClose, autoFocus }
         applyToolUpdate('todos', (items) => items.filter((t) => t.id !== id))
         return { ok: true }
       }
-      case 'add_note': {
-        const content = str(args.content)
-        if (!content) return { ok: false, error: 'content 为空' }
-        applyToolUpdate('notes', (items) => [{ id: uid(), content, pinned: false, updatedAt: nowIso() }, ...items])
+      case 'add_course': {
+        const name = str(args.name)
+        const weekday = Math.round(Number(args.weekday))
+        const start = str(args.start)
+        const end = str(args.end)
+        if (!name) return { ok: false, error: 'name 为空' }
+        if (!Number.isInteger(weekday) || weekday < 1 || weekday > 7)
+          return { ok: false, error: 'weekday 需为 1(周一)~7(周日)' }
+        const valid = /^([01]?\d|2[0-3]):[0-5]\d$/.test(start) && /^([01]?\d|2[0-3]):[0-5]\d$/.test(end)
+        if (!valid) return { ok: false, error: '时间格式需为 HH:mm,如 08:00' }
+        // 补零到 HH:mm 再比较,避免 "9:00" 这类输入按字符串比错
+        const s = start.padStart(5, '0')
+        const e = end.padStart(5, '0')
+        if (e <= s) return { ok: false, error: '结束时间需晚于开始时间' }
+        applyToolUpdate('courses', (items) => [
+          ...items,
+          {
+            id: uid(),
+            name,
+            weekday,
+            start: s,
+            end: e,
+            location: str(args.location) || undefined,
+            teacher: str(args.teacher) || undefined,
+            color: items.length % 8,
+          },
+        ])
         return { ok: true }
       }
       case 'create_habit': {
@@ -344,7 +367,7 @@ export default function AiPanel({ data, update, onNavigate, onClose, autoFocus }
       <div className="ai-msgs" ref={listRef}>
         {chats.length === 0 && !busy && (
           <div className="ai-welcome">
-            <p>问数据、记待办、写笔记、打卡习惯,交给 AI 完成。</p>
+            <p>问数据、记待办、排课表、打卡习惯,交给 AI 完成。</p>
             <p className="ai-welcome-eg">试试「我这周效率怎么样」,或「帮我加一条明天交周报的待办」。</p>
             {cfg && !configured && (
               <button className="btn solid" onClick={() => setSettingsOpen(true)}>

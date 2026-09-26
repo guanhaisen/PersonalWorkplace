@@ -105,9 +105,14 @@ export const AI_TOOLS = [
   },
   {
     type: 'function',
-    function: fn('add_note', '新建一条笔记(置于笔记列表最前)', {
-      content: { type: 'string', description: '笔记正文' },
-    }, ['content']),
+    function: fn('add_course', '在课表里新建一门课', {
+      name: { type: 'string', description: '课程名' },
+      weekday: { type: 'integer', description: '星期,1=周一 … 7=周日' },
+      start: { type: 'string', description: '开始时间 HH:mm,如 08:00' },
+      end: { type: 'string', description: '结束时间 HH:mm,如 09:40' },
+      location: { type: 'string', description: '上课地点,可选' },
+      teacher: { type: 'string', description: '老师姓名,可选' },
+    }, ['name', 'weekday', 'start', 'end']),
   },
   {
     type: 'function',
@@ -124,7 +129,7 @@ export const AI_TOOLS = [
   {
     type: 'function',
     function: fn('switch_view', '切换到某个页面展示给用户', {
-      view: { type: 'string', enum: ['overview', 'todos', 'notes', 'focus', 'habits', 'ai'], description: '目标页面' },
+      view: { type: 'string', enum: ['overview', 'todos', 'schedule', 'habits', 'ai'], description: '目标页面' },
     }, ['view']),
   },
 ]
@@ -161,22 +166,26 @@ export function buildDataSnapshot(data: AppData): string {
   }
 
   lines.push('')
-  lines.push(`[笔记] 共 ${data.notes.length} 条(按更新时间,仅展示前 30 条)`)
-  const notes = [...data.notes]
-    .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt))
-    .slice(0, 30)
-  for (const n of notes) lines.push(`- id:${n.id}${n.pinned ? '[置顶]' : ''} ${cut(n.content.replace(/\s+/g, ' '), 120)}`)
-
-  lines.push('')
-  const weekStart = new Date(now)
-  weekStart.setDate(now.getDate() - ((now.getDay() + 6) % 7)) // 本周一
-  let todayMin = 0
-  let weekMin = 0
-  for (const p of data.pomodoros) {
-    if (p.date === today) todayMin += p.minutes
-    if (p.date >= todayStr(weekStart)) weekMin += p.minutes
+  lines.push(`[课表] 共 ${data.courses.length} 门课(按星期与时间排序)`)
+  const courses = [...data.courses].sort(
+    (a, b) => a.weekday - b.weekday || a.start.localeCompare(b.start),
+  )
+  for (const c of courses) {
+    const weeks = c.weekStart
+      ? c.weekEnd && c.weekEnd !== c.weekStart
+        ? `第${c.weekStart}-${c.weekEnd}周`
+        : `第${c.weekStart}周`
+      : ''
+    const marks = [
+      c.weekday % 7 === now.getDay() ? '[今日]' : '',
+      weeks,
+      c.location ? `@${c.location}` : '',
+      c.teacher,
+    ]
+      .filter(Boolean)
+      .join(' ')
+    lines.push(`- id:${c.id} 周${WEEKDAYS[c.weekday % 7]} ${c.start}-${c.end} ${cut(c.name, 40)}${marks ? `(${marks})` : ''}`)
   }
-  lines.push(`[番茄钟] 今日 ${todayMin} 分钟,本周(周一起) ${weekMin} 分钟`)
 
   return lines.join('\n')
 }
@@ -185,7 +194,7 @@ export function buildSystemPrompt(data: AppData): string {
   const now = new Date()
   const today = todayStr(now)
   return [
-    `你是「个人工作台」(一个本地个人效率工具,含待办/笔记/习惯打卡/番茄钟)里的 AI 助手。今天是 ${today} 星期${WEEKDAYS[now.getDay()]}。`,
+    `你是「个人工作台」(一个本地个人效率工具,含待办/课表/习惯打卡)里的 AI 助手。今天是 ${today} 星期${WEEKDAYS[now.getDay()]}。`,
     '下面是用户的实时数据快照。回答数据相关问题时以快照为准;用户要求修改数据时调用工具完成,不要编造 id,只用快照里出现的 id。',
     '修改完成后用一句话向用户确认;闲聊与问答保持简洁,全程使用中文。',
     '',

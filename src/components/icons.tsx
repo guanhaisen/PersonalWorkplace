@@ -31,23 +31,16 @@ export function IconTodo() {
   )
 }
 
-export function IconNote() {
+/** 课表:周网格与课程块 */
+export function IconSchedule() {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path d="M3.6 2.2h6l2.8 2.8v8.8H3.6z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-      <path d="M9.6 2.4V5h2.6" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-      <path d="M6 8.4h4M6 10.8h2.8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-export function IconTimer() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <circle cx="8" cy="9.2" r="5.3" stroke="currentColor" strokeWidth="1.5" />
-      <path d="M8 9.2l2.3-2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-      <path d="M6.4 2h3.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-      <path d="M8 2v1.8" stroke="currentColor" strokeWidth="1.5" />
+      <rect x="2.2" y="2.2" width="11.6" height="11.6" rx="2.4" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M2.4 5.8h11.2" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M6.7 2.4v11.2" stroke="currentColor" strokeWidth="1.5" />
+      <rect x="3.2" y="7.2" width="2.4" height="2.2" rx="0.6" fill="currentColor" />
+      <rect x="7.8" y="7.2" width="2.4" height="4.4" rx="0.6" fill="currentColor" opacity=".45" />
+      <rect x="3.2" y="10.2" width="2.4" height="1.4" rx="0.6" fill="currentColor" opacity=".45" />
     </svg>
   )
 }

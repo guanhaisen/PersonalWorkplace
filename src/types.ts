@@ -8,11 +8,23 @@ export interface Todo {
   completedAt?: string
 }
 
-export interface Note {
+/** 课表里的一门课:weekday 1~7 表示周一~周日,时间用 HH:mm */
+export interface Course {
   id: string
-  content: string
-  pinned: boolean
-  updatedAt: string
+  name: string
+  teacher?: string
+  location?: string
+  weekday: number
+  start: string
+  end: string
+  /** 课程块配色,预设色板索引 */
+  color: number
+  /** 起始周(含),缺省表示每周都上 */
+  weekStart?: number
+  /** 结束周(含) */
+  weekEnd?: number
+  /** 单双周限制,缺省每周 */
+  parity?: 'odd' | 'even'
 }
 
 export interface Habit {
@@ -21,14 +33,6 @@ export interface Habit {
   createdAt: string
   /** 打卡记录:日期(YYYY-MM-DD)→ true */
   records: Record<string, true>
-}
-
-export interface PomodoroSession {
-  id: string
-  /** 完成日期 YYYY-MM-DD */
-  date: string
-  minutes: number
-  completedAt: string
 }
 
 export interface ChatUsage {
@@ -58,9 +62,8 @@ export interface LinkItem {
 
 export interface AppData {
   todos: Todo[]
-  notes: Note[]
+  courses: Course[]
   habits: Habit[]
-  pomodoros: PomodoroSession[]
   chats: ChatMsg[]
   links: LinkItem[]
 }

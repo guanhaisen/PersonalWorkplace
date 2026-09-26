@@ -1,6 +1,6 @@
 import type { AppData } from './types'
 
-export type CollectionKey = 'todos' | 'notes' | 'habits' | 'pomodoros' | 'chats' | 'links'
+export type CollectionKey = 'todos' | 'courses' | 'habits' | 'chats' | 'links'
 
 async function req<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, {

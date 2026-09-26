@@ -1,49 +1,37 @@
 import { useMemo, useState } from 'react'
-import type { Habit, PomodoroSession } from '../types'
+import type { Habit } from '../types'
 
 interface Props {
-  pomodoros: PomodoroSession[]
   habits: Habit[]
 }
 
 const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'] // 周一开头
 
-interface DayStat {
-  minutes: number
-  habits: number
-}
-
-// 活跃度 = 专注分钟 + 打卡次数 ×10,映射为 0~4 五档热力
-function levelOf(s?: DayStat): number {
-  if (!s) return 0
-  const score = s.minutes + s.habits * 10
-  if (score >= 131) return 4
-  if (score >= 71) return 3
-  if (score >= 31) return 2
+// 活跃度 = 当天习惯打卡完成率,映射为 0~4 五档热力(无习惯时按打卡次数)
+function levelOf(done: number, total: number): number {
+  if (done <= 0) return 0
+  if (total <= 0) return 2
+  const ratio = done / total
+  if (ratio >= 1) return 4
+  if (ratio >= 0.75) return 3
+  if (ratio >= 0.5) return 2
   return 1
 }
 
-export default function CalendarPanel({ pomodoros, habits }: Props) {
+export default function CalendarPanel({ habits }: Props) {
   const now = new Date()
   const [cursor, setCursor] = useState({ year: now.getFullYear(), month: now.getMonth() })
 
-  // 每天的专注分钟与打卡次数
+  // 每天的打卡习惯数
   const dayStats = useMemo(() => {
-    const map = new Map<string, DayStat>()
-    for (const p of pomodoros) {
-      const s = map.get(p.date) ?? { minutes: 0, habits: 0 }
-      s.minutes += p.minutes
-      map.set(p.date, s)
-    }
+    const map = new Map<string, number>()
     for (const h of habits) {
       for (const day of Object.keys(h.records)) {
-        const s = map.get(day) ?? { minutes: 0, habits: 0 }
-        s.habits += 1
-        map.set(day, s)
+        map.set(day, (map.get(day) ?? 0) + 1)
       }
     }
     return map
-  }, [pomodoros, habits])
+  }, [habits])
 
   const { cells, todayKey } = useMemo(() => {
     const { year, month } = cursor
@@ -98,12 +86,10 @@ export default function CalendarPanel({ pomodoros, habits }: Props) {
         {cells.map((d, i) => {
           if (d === null) return <span key={i} className="day off" />
           const key = `${cursor.year}-${String(cursor.month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-          const stat = dayStats.get(key)
-          const lv = levelOf(stat)
+          const done = dayStats.get(key) ?? 0
+          const lv = levelOf(done, habits.length)
           const isToday = key === todayKey
-          const tip = stat
-            ? `${key} · 专注 ${stat.minutes} 分钟 · 习惯打卡 ${stat.habits} 次`
-            : `${key} · 无记录`
+          const tip = done > 0 ? `${key} · 习惯打卡 ${done}/${habits.length}` : `${key} · 无记录`
           return (
             <span key={i} className={`day l${lv} ${isToday ? 'today' : ''}`} title={tip}>
               <span className="num">{d}</span>
@@ -120,7 +106,7 @@ export default function CalendarPanel({ pomodoros, habits }: Props) {
           ))}
         </span>
         <span>多</span>
-        <span className="legend-hint">专注时长 + 习惯打卡</span>
+        <span className="legend-hint">习惯打卡完成度</span>
       </div>
     </div>
   )

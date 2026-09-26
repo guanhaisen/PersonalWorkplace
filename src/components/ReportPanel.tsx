@@ -30,7 +30,7 @@ function weekRange(offset: number): WeekRange {
   return { offset, label, start: days[0], end: days[6], days }
 }
 
-/** UTC ISO 时间串 → 本地日期 YYYY-MM-DD(与番茄钟/习惯的本地口径一致) */
+/** UTC ISO 时间串 → 本地日期 YYYY-MM-DD(与习惯打卡的本地口径一致) */
 const localDate = (iso: string) => {
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? '' : todayStr(d)
@@ -39,18 +39,6 @@ const localDate = (iso: string) => {
 function buildStats(data: AppData, week: WeekRange) {
   const inWeek = (date: string) => date >= week.start && date <= week.end
   const today = todayStr()
-  // 番茄:按日聚合分钟数
-  const perDay = week.days.map((d) =>
-    data.pomodoros.filter((p) => p.date === d).reduce((s, p) => s + p.minutes, 0),
-  )
-  const focusMinutes = perDay.reduce((a, b) => a + b, 0)
-  const focusDays = perDay.filter((m) => m > 0).length
-  // 待办:完成按 completedAt 归周,新建按 createdAt 归周
-  const doneWeek = data.todos
-    .filter((t) => t.done && t.completedAt && inWeek(localDate(t.completedAt)))
-    .sort((a, b) => (b.completedAt || '').localeCompare(a.completedAt || ''))
-  const createdWeek = data.todos.filter((t) => inWeek(localDate(t.createdAt)))
-  const overdue = data.todos.filter((t) => !t.done && t.dueDate && t.dueDate < today)
   // 习惯:本周每天的打卡情况
   const habitRows = data.habits.map((h) => ({
     id: h.id,
@@ -60,12 +48,17 @@ function buildStats(data: AppData, week: WeekRange) {
   }))
   const habitDone = habitRows.reduce((s, h) => s + h.count, 0)
   const habitTotal = data.habits.length * 7
-  // 笔记没有 createdAt,按最后更新时间归周
-  const notesWeek = data.notes.filter((n) => inWeek(localDate(n.updatedAt))).length
-  return { today, perDay, focusMinutes, focusDays, doneWeek, createdWeek, overdue, habitRows, habitDone, habitTotal, notesWeek }
+  // 按日聚合打卡次数,画周分布柱状图
+  const habitPerDay = week.days.map((d) => data.habits.filter((h) => h.records[d]).length)
+  const habitDays = habitPerDay.filter((n) => n > 0).length
+  // 待办:完成按 completedAt 归周,新建按 createdAt 归周
+  const doneWeek = data.todos
+    .filter((t) => t.done && t.completedAt && inWeek(localDate(t.completedAt)))
+    .sort((a, b) => (b.completedAt || '').localeCompare(a.completedAt || ''))
+  const createdWeek = data.todos.filter((t) => inWeek(localDate(t.createdAt)))
+  const overdue = data.todos.filter((t) => !t.done && t.dueDate && t.dueDate < today)
+  return { today, habitRows, habitDone, habitTotal, habitPerDay, habitDays, doneWeek, createdWeek, overdue }
 }
-
-const fmtMinutes = (m: number) => (m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ''}` : `${m}m`)
 
 export default function ReportPanel({ data }: { data: AppData }) {
   const [offset, setOffset] = useState(0)
@@ -95,14 +88,12 @@ export default function ReportPanel({ data }: { data: AppData }) {
     setAiError('')
     try {
       const lines = [
-        `- 番茄专注:共 ${stats.focusMinutes} 分钟,有记录 ${stats.focusDays} 天,按日分布(周一~周日)为 ${stats.perDay.join(', ')} 分钟`,
         `- 待办:本周完成 ${stats.doneWeek.length} 条,新建 ${stats.createdWeek.length} 条,当前逾期 ${stats.overdue.length} 条${
           stats.overdue.length ? `(逾期项:${stats.overdue.slice(0, 5).map((t) => t.title).join('、')})` : ''
         }`,
         stats.habitRows.length
-          ? `- 习惯打卡:共 ${stats.habitDone}/${stats.habitTotal} 次,明细:${stats.habitRows.map((h) => `${h.name} ${h.count}/7`).join('、')}`
+          ? `- 习惯打卡:共 ${stats.habitDone}/${stats.habitTotal} 次,按日分布(周一~周日)为 ${stats.habitPerDay.join(', ')} 次,明细:${stats.habitRows.map((h) => `${h.name} ${h.count}/7`).join('、')}`
           : '- 习惯打卡:还没有创建习惯',
-        `- 笔记:本周更新 ${stats.notesWeek} 条`,
       ]
       const res = await aiChat({
         messages: buildReportMessages({ label: week.label, start: week.start, end: week.end, lines }),
@@ -117,7 +108,7 @@ export default function ReportPanel({ data }: { data: AppData }) {
     }
   }
 
-  const maxMinutes = Math.max(...stats.perDay, 1)
+  const maxCount = Math.max(...stats.habitPerDay, 1)
   const doneShown = stats.doneWeek.slice(0, 6)
 
   return (
@@ -142,10 +133,6 @@ export default function ReportPanel({ data }: { data: AppData }) {
 
       <div className="report-stats">
         <div className="rstat">
-          <b>{fmtMinutes(stats.focusMinutes)}</b>
-          <span>专注时长</span>
-        </div>
-        <div className="rstat">
           <b>
             {stats.doneWeek.length}
             <em>/ {stats.createdWeek.length}</em>
@@ -159,32 +146,32 @@ export default function ReportPanel({ data }: { data: AppData }) {
           </b>
           <span>习惯打卡</span>
         </div>
-        <div className="rstat">
-          <b>{stats.notesWeek}</b>
-          <span>笔记更新</span>
+        <div className={`rstat ${stats.overdue.length > 0 ? 'warn' : ''}`}>
+          <b>{stats.overdue.length}</b>
+          <span>逾期待办</span>
         </div>
       </div>
 
       <section className="rsec">
         <h3 className="rsec-title">
-          专注分布<span className="rsec-sub">分钟 / 天 · {stats.focusDays} 天有记录</span>
+          习惯打卡分布<span className="rsec-sub">次数 / 天 · {stats.habitDays} 天有记录</span>
         </h3>
-        {stats.focusMinutes > 0 ? (
+        {stats.habitDone > 0 ? (
           <div className="report-chart">
-            {stats.perDay.map((m, i) => (
+            {stats.habitPerDay.map((n, i) => (
               <div key={i} className="rcol">
-                {m > 0 && <span className="rval">{m}</span>}
+                {n > 0 && <span className="rval">{n}</span>}
                 <div
-                  className={`rbar ${m === 0 ? 'zero' : ''} ${week.days[i] === stats.today ? 'today' : ''}`}
-                  style={{ height: `${Math.max(Math.round((m / maxMinutes) * 88), 3)}px` }}
-                  title={`${week.days[i]}(周${WEEK_LABELS[i]})专注 ${m} 分钟`}
+                  className={`rbar ${n === 0 ? 'zero' : ''} ${week.days[i] === stats.today ? 'today' : ''}`}
+                  style={{ height: `${Math.max(Math.round((n / maxCount) * 88), 3)}px` }}
+                  title={`${week.days[i]}(周${WEEK_LABELS[i]})打卡 ${n} 次`}
                 />
                 <span className="rlab">{WEEK_LABELS[i]}</span>
               </div>
             ))}
           </div>
         ) : (
-          <div className="empty-hint">这一周没有专注记录</div>
+          <div className="empty-hint">这一周没有打卡记录</div>
         )}
       </section>
 
