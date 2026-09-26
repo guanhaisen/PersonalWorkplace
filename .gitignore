@@ -7,3 +7,7 @@ data/
 .workbuddy/
 .wbapp_*.genie
 
+
+# Live2D 模型:授权仅限本地使用、禁止二传,不入库
+miku/
+public/live2d/miku/

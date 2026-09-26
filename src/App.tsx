@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type CSSProperties } from 'react'
 import type { AppData } from './types'
-import { loadAll, saveCollection, type CollectionKey } from './api'
+import { loadAll, saveCollection, nowLocalStr, type CollectionKey } from './api'
 import TodoPanel from './components/TodoPanel'
 import CalendarPanel from './components/CalendarPanel'
 import SchedulePanel from './components/SchedulePanel'
@@ -11,6 +11,8 @@ import ReportPanel from './components/ReportPanel'
 import LinksBar from './components/LinksBar'
 import StartPageModal from './components/StartPageModal'
 import ReminderPopup from './components/ReminderPopup'
+import MikuStage, { MIKU_DRAG_END_EVENT, MIKU_DRAG_START_EVENT, MIKU_PLAY_EVENT, MIKU_QQ_EVENT, MIKU_TAP_EVENT } from './components/MikuStage'
+import MikuMenu, { type MikuMenuItem } from './components/MikuMenu'
 import { BrandMark, IconAi, IconCalendar, IconGitHub, IconGrip, IconHabit, IconKeys, IconOverview, IconReport, IconSchedule, IconTodo } from './components/icons'
 import CommandPalette, { type Command } from './components/CommandPalette'
 
@@ -272,18 +274,23 @@ export default function App() {
   const FAB_POS_KEY = 'ai.fab.pos.v1'
   const FAB_SIZE = 52
   const FAB_MARGIN = 8
+  // 单击弹窗的延迟:给双击(切换 QQ 形态)的第二下留出取消窗口
+  const FAB_POP_DELAY = 280
 
-  const clampFab = (p: { right: number; bottom: number }) => {
+  const clampFab = (p: { right: number; bottom: number }, size?: { w: number; h: number }) => {
     // 手机端底部有图标导航栏,悬浮球拖动时最低不压到它
     const navReserve = window.matchMedia('(max-width: 640px)').matches ? 64 : 0
+    // Miku 化后按钮比原 52px 大,拖动中按实际尺寸钳制;初始读档时按钮尚未挂载,退回常量
+    const w = size?.w ?? FAB_SIZE
+    const h = size?.h ?? FAB_SIZE
     return {
       right: Math.min(
         Math.max(Math.round(p.right), FAB_MARGIN),
-        Math.max(window.innerWidth - FAB_SIZE - FAB_MARGIN, FAB_MARGIN),
+        Math.max(window.innerWidth - w - FAB_MARGIN, FAB_MARGIN),
       ),
       bottom: Math.min(
         Math.max(Math.round(p.bottom), FAB_MARGIN),
-        Math.max(window.innerHeight - FAB_SIZE - FAB_MARGIN - navReserve, FAB_MARGIN),
+        Math.max(window.innerHeight - h - FAB_MARGIN - navReserve, FAB_MARGIN),
       ),
     }
   }
@@ -313,6 +320,8 @@ export default function App() {
   // 悬浮球点击弹出就地聊天窗(不跳转页面);位置锚定按钮当前所在处
   const [fabChatOpen, setFabChatOpen] = useState(false)
   const [fabChatPos, setFabChatPos] = useState<{ left: number; top: number } | null>(null)
+  // 待弹出的聊天窗定时器:双击第二下会取消它
+  const fabPopTimer = useRef<number | null>(null)
   // 问候语名字:个人偏好,存 localStorage
   const [name, setName] = useState(() => localStorage.getItem('profile.name') || '')
   const [nameDraft, setNameDraft] = useState('')
@@ -320,6 +329,31 @@ export default function App() {
   const nameInputRef = useRef<HTMLInputElement>(null)
   // 「设为浏览器开始页」指引弹窗
   const [startPageOpen, setStartPageOpen] = useState(false)
+  // Miku Live2D 悬浮球:加载成功前按钮保持星星图标,失败后永久回退图标
+  const [mikuReady, setMikuReady] = useState(false)
+  const [mikuFailed, setMikuFailed] = useState(false)
+  // QQ 人形态:按钮盒与拖动钳制范围随之缩小
+  const [mikuQQ, setMikuQQ] = useState(false)
+  // 右键菜单与 Miku 偏好(隐藏 / 缩放 / 眼神跟随 / 闲置彩蛋),均持久化
+  const [mikuMenu, setMikuMenu] = useState<{ x: number; y: number } | null>(null)
+  const [mikuHidden, setMikuHidden] = useState(() => localStorage.getItem('miku.hidden') === '1')
+  const [mikuScale, setMikuScale] = useState(() => Number(localStorage.getItem('miku.scale')) || 1)
+  const [mikuEye, setMikuEye] = useState(() => localStorage.getItem('miku.eye') !== '0')
+  const [mikuIdle, setMikuIdle] = useState(() => localStorage.getItem('miku.idle') !== '0')
+
+  const hideMiku = () => {
+    setMikuHidden(true)
+    localStorage.setItem('miku.hidden', '1')
+    setFabChatOpen(false)
+    if (fabPopTimer.current !== null) {
+      window.clearTimeout(fabPopTimer.current)
+      fabPopTimer.current = null
+    }
+  }
+  const showMiku = () => {
+    setMikuHidden(false)
+    localStorage.removeItem('miku.hidden')
+  }
 
   const startEditName = () => {
     setNameDraft(name)
@@ -380,8 +414,12 @@ export default function App() {
     if (!fabMoved.current) {
       fabMoved.current = true
       setFabDragging(true)
+      window.dispatchEvent(new CustomEvent(MIKU_DRAG_START_EVENT))
     }
-    const next = clampFab({ right: d.startRight - dx, bottom: d.startBottom - dy })
+    const next = clampFab(
+      { right: d.startRight - dx, bottom: d.startBottom - dy },
+      { w: fabRef.current?.offsetWidth ?? FAB_SIZE, h: fabRef.current?.offsetHeight ?? FAB_SIZE },
+    )
     d.next = next
     // 拖动过程直接改样式,避免每个 mousemove 都重渲染整棵 App 树
     const el = fabRef.current
@@ -396,9 +434,13 @@ export default function App() {
     fabDrag.current = null
     setFabDragging(false)
     if (!d) return
-    if (fabMoved.current && d.next) {
-      setFabPos(d.next)
-      localStorage.setItem(FAB_POS_KEY, JSON.stringify(d.next))
+    if (fabMoved.current) {
+      // 真拖动过才通知 Miku 落地弹跳
+      window.dispatchEvent(new CustomEvent(MIKU_DRAG_END_EVENT))
+      if (d.next) {
+        setFabPos(d.next)
+        localStorage.setItem(FAB_POS_KEY, JSON.stringify(d.next))
+      }
     }
   }
 
@@ -411,7 +453,13 @@ export default function App() {
   }, [fabChatOpen])
 
   useEffect(() => {
-    if (view === 'ai') setFabChatOpen(false)
+    if (view === 'ai') {
+      setFabChatOpen(false)
+      if (fabPopTimer.current !== null) {
+        window.clearTimeout(fabPopTimer.current)
+        fabPopTimer.current = null
+      }
+    }
   }, [view])
 
   // 窗口缩小后把悬浮球拉回视口内(仅视觉钳制,不覆盖记住的位置,放大窗口后原位仍在)
@@ -659,6 +707,7 @@ export default function App() {
     { id: 'new-todo', label: '新建待办', hint: 'T', run: () => { setView('todos'); emit('workbench:focus-todo-input') } },
     { id: 'ask-ai', label: '询问 AI 助手', run: () => { setView('ai'); setTimeout(() => emit('workbench:ai-focus'), 0) } },
     { id: 'export', label: '导出全部数据', run: handleExport },
+    ...(mikuHidden ? [{ id: 'show-miku', label: '显示 Miku 悬浮球', run: showMiku }] : []),
   ]
 
   const handleImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -707,6 +756,87 @@ export default function App() {
     )
   }
   if (!data) return <div className="center-hint">加载中…</div>
+
+  // ---------- Miku 右键菜单:菜单树(依赖 data 与各项状态,放在数据守卫之后) ----------
+  const upcomingReminders = (data.reminders ?? [])
+    .filter((r) => !r.firedAt && r.dueAt >= nowLocalStr())
+    .sort((a, b) => (a.dueAt < b.dueAt ? -1 : 1))
+    .slice(0, 4)
+  const playMiku = (expression: string) =>
+    window.dispatchEvent(new CustomEvent(MIKU_PLAY_EVENT, { detail: { expression } }))
+  const mikuMenuItems: MikuMenuItem[] = [
+    { key: 'hide', label: '隐藏她', hint: '⌘K 恢复', onClick: hideMiku },
+    { key: 'sep1', label: '', divider: true },
+    {
+      key: 'act',
+      label: '动作',
+      children: [
+        { key: 'heart', label: '比心', onClick: () => playMiku('比心') },
+        { key: 'blush', label: '脸红', onClick: () => playMiku('脸红') },
+        { key: 'circle', label: '圈圈', onClick: () => playMiku('圈圈') },
+        { key: 'dance', label: '拿葱舞', onClick: () => window.dispatchEvent(new CustomEvent(MIKU_PLAY_EVENT, { detail: { dance: true } })) },
+        { key: 'qq', label: 'QQ 人形态', checked: mikuQQ, onClick: () => window.dispatchEvent(new CustomEvent(MIKU_QQ_EVENT)) },
+      ],
+    },
+    {
+      key: 'rem',
+      label: '定时提醒',
+      children: [
+        ...upcomingReminders.map((r) => ({ key: r.id, label: r.title, hint: r.dueAt.split(' ')[1], dim: true })),
+        ...(upcomingReminders.length > 0 ? [{ key: 'rem-sep', label: '', divider: true }] : []),
+        {
+          key: 'rem-new',
+          label: '让 AI 新建提醒',
+          onClick: () => {
+            if (view !== 'ai') toggleFabChat()
+          },
+        },
+      ],
+    },
+    {
+      key: 'size',
+      label: '大小',
+      children: (
+        [
+          [0.75, '小'],
+          [1, '标准'],
+          [1.25, '大'],
+        ] as const
+      ).map(([v, label]) => ({
+        key: `size-${v}`,
+        label,
+        checked: mikuScale === v,
+        onClick: () => {
+          setMikuScale(v)
+          localStorage.setItem('miku.scale', String(v))
+        },
+      })),
+    },
+    {
+      key: 'disp',
+      label: '显示',
+      children: [
+        {
+          key: 'eye',
+          label: '眼神跟随',
+          checked: mikuEye,
+          onClick: () => {
+            setMikuEye(!mikuEye)
+            localStorage.setItem('miku.eye', !mikuEye ? '1' : '0')
+          },
+        },
+        {
+          key: 'idle',
+          label: '闲置彩蛋',
+          checked: mikuIdle,
+          onClick: () => {
+            setMikuIdle(!mikuIdle)
+            localStorage.setItem('miku.idle', !mikuIdle ? '1' : '0')
+          },
+        },
+      ],
+    },
+  ]
 
   const now = new Date()
   const hour = now.getHours()
@@ -1013,30 +1143,60 @@ export default function App() {
           )
         })()}
 
-        {/* 右下角:AI 助手快捷入口,除 AI 助手页外常驻;可拖动,点击弹出就地聊天窗 */}
-        {view !== 'ai' && (
+        {/* 右下角:AI 助手快捷入口(Live2D Miku),全页面常驻;可拖动,点击弹出就地聊天窗,
+            右键打开桌宠菜单;「隐藏她」后经 ⌘K 命令面板唤回 */}
+        {!mikuHidden && (
           <button
             ref={fabRef}
-            className={`ai-fab ${fabDragging ? 'dragging' : ''}`}
-            style={fabPos ?? undefined}
-            title="AI 助手 · 拖动可换位置"
+            className={`ai-fab ${fabDragging ? 'dragging' : ''} ${mikuReady && !mikuFailed ? 'miku-fab' : ''} ${
+              mikuQQ ? 'miku-qq' : ''
+            }`}
+            style={{ ...(fabPos ?? {}), '--miku-scale': mikuScale } as CSSProperties}
+            title="AI 助手 Miku · 右键更多 · 拖动可换位置"
             onPointerDown={onFabPointerDown}
             onPointerMove={onFabPointerMove}
             onPointerUp={endFabDrag}
             onPointerCancel={endFabDrag}
+            onContextMenu={(e) => {
+              e.preventDefault()
+              setMikuMenu({ x: e.clientX, y: e.clientY })
+            }}
             onClick={() => {
               if (fabMoved.current) {
                 fabMoved.current = false
                 return
               }
-              toggleFabChat()
+              // 无论哪个页面点她都有互动反馈;AI 助手页本身是完整聊天界面,不再弹就地小窗
+              window.dispatchEvent(new CustomEvent(MIKU_TAP_EVENT))
+              if (view === 'ai') return
+              // 弹窗延迟弹出,双击的第二下会取消(双击 = 切换 QQ 形态)
+              if (fabPopTimer.current !== null) {
+                window.clearTimeout(fabPopTimer.current)
+                fabPopTimer.current = null
+                return
+              }
+              fabPopTimer.current = window.setTimeout(() => {
+                fabPopTimer.current = null
+                toggleFabChat()
+              }, FAB_POP_DELAY)
             }}
+            onDoubleClick={() => window.dispatchEvent(new CustomEvent(MIKU_QQ_EVENT))}
           >
-            <IconAi />
+            {!mikuFailed && (
+              <MikuStage
+                onReady={() => setMikuReady(true)}
+                onFailed={() => setMikuFailed(true)}
+                onQQChange={setMikuQQ}
+                eyeFollow={mikuEye}
+                idleEnabled={mikuIdle}
+              />
+            )}
+            {/* 加载中先露星星占位,Miku 就绪后由 CSS 类切换按钮尺寸并隐藏图标 */}
+            {!mikuReady && <IconAi />}
           </button>
         )}
 
-        {view !== 'ai' && fabChatOpen && (
+        {fabChatOpen && (
           <div className="ai-pop" style={fabChatPos ?? undefined}>
             <AiPanel
               data={data}
@@ -1050,6 +1210,11 @@ export default function App() {
 
         {/* 到期提醒 + AI 主动巡查弹窗:锚定 AI 悬浮球 */}
         <ReminderPopup data={data} update={update} />
+
+        {/* Miku 右键菜单 */}
+        {mikuMenu && !mikuHidden && (
+          <MikuMenu x={mikuMenu.x} y={mikuMenu.y} items={mikuMenuItems} onClose={() => setMikuMenu(null)} />
+        )}
       </main>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />

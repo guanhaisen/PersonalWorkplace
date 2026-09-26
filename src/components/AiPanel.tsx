@@ -13,6 +13,7 @@ import {
   type ToolCall,
   type UpstreamMessage,
 } from '../ai'
+import { MIKU_EXPRESS_EVENT } from './MikuStage'
 
 interface Props {
   data: AppData
@@ -270,6 +271,8 @@ export default function AiPanel({ data, update, onNavigate, onClose, autoFocus }
         ...items,
         { id: uid(), role: 'assistant', content: reply, ts: nowIso(), usage: usage ?? undefined },
       ])
+      // 让 Miku 悬浮球做个表情(未启用 Live2D 时无监听方,无副作用)
+      window.dispatchEvent(new CustomEvent(MIKU_EXPRESS_EVENT))
     } catch (err) {
       if ((err as Error)?.name !== 'AbortError') setError((err as Error)?.message || '请求失败,请重试')
     } finally {
