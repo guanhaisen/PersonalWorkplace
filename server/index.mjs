@@ -11,8 +11,8 @@ const PORT = process.env.PORT || 3001
 // 默认只监听本机,局域网设备不可达;确需开放时启动前设 HOST=0.0.0.0
 const HOST = process.env.HOST || '127.0.0.1'
 
-const COLLECTIONS = ['todos', 'courses', 'habits', 'chats', 'links']
-const DEFAULTS = { todos: [], courses: [], habits: [], chats: [], links: [] }
+const COLLECTIONS = ['todos', 'courses', 'habits', 'chats', 'links', 'reminders']
+const DEFAULTS = { todos: [], courses: [], habits: [], chats: [], links: [], reminders: [] }
 const BACKUP_DIR = path.join(DATA_DIR, 'backups')
 const BACKUP_KEEP = 10 // 每个集合保留的最近备份数
 const BACKUP_MIN_GAP_MS = 60_000 // 距上次备份不足 1 分钟则跳过(防抖动写入刷屏)

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AppData, ChatUsage } from '../types'
 import type { UpdateFn, ViewKey } from '../App'
-import { todayStr, uid } from '../api'
+import { todayStr, uid, nowLocalStr, DUE_AT_RE } from '../api'
 import {
   AI_TOOLS,
   aiChat,
@@ -31,7 +31,7 @@ const PRESETS: { label: string; baseUrl: string; model: string }[] = [
   { label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
 ]
 
-const VIEWS: ViewKey[] = ['overview', 'todos', 'schedule', 'habits', 'ai']
+const VIEWS: ViewKey[] = ['overview', 'todos', 'schedule', 'habits', 'ai', 'report']
 const nowIso = () => new Date().toISOString()
 
 export default function AiPanel({ data, update, onNavigate, onClose, autoFocus }: Props) {
@@ -171,6 +171,21 @@ export default function AiPanel({ data, update, onNavigate, onClose, autoFocus }
         applyToolUpdate('habits', (items) =>
           items.map((h) => (h.id === id ? { ...h, records: { ...h.records, [today]: true } } : h)),
         )
+        return { ok: true }
+      }
+      case 'add_reminder': {
+        const title = str(args.title)
+        const dueAt = str(args.dueAt)
+        if (!title) return { ok: false, error: 'title 为空' }
+        if (!DUE_AT_RE.test(dueAt)) return { ok: false, error: 'dueAt 需为 YYYY-MM-DD HH:mm 格式(24小时制)' }
+        if (dueAt <= nowLocalStr()) return { ok: false, error: 'dueAt 必须晚于当前时刻,请按系统提示里的现在时刻推算' }
+        applyToolUpdate('reminders', (items) => [...items, { id: uid(), title, dueAt, createdAt: nowIso() }])
+        return { ok: true }
+      }
+      case 'delete_reminder': {
+        const id = str(args.id)
+        if (!d.reminders.some((r) => r.id === id)) return { ok: false, error: `未找到提醒 ${id}` }
+        applyToolUpdate('reminders', (items) => items.filter((r) => r.id !== id))
         return { ok: true }
       }
       case 'switch_view': {

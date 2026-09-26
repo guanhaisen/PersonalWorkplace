@@ -128,8 +128,25 @@ export const AI_TOOLS = [
   },
   {
     type: 'function',
+    function: fn('add_reminder', '新建一条定时提醒,到点会弹窗提醒用户', {
+      title: { type: 'string', description: '提醒内容' },
+      dueAt: {
+        type: 'string',
+        description:
+          '触发时间,本地时间 YYYY-MM-DD HH:mm(24小时制)。根据系统提示里的今天日期与当前时刻推算相对表达,如「15分钟后」「今晚8点」,必须晚于当前时刻',
+      },
+    }, ['title', 'dueAt']),
+  },
+  {
+    type: 'function',
+    function: fn('delete_reminder', '删除一条提醒', {
+      id: { type: 'string', description: '提醒 id,来自数据快照' },
+    }, ['id']),
+  },
+  {
+    type: 'function',
     function: fn('switch_view', '切换到某个页面展示给用户', {
-      view: { type: 'string', enum: ['overview', 'todos', 'schedule', 'habits', 'ai'], description: '目标页面' },
+      view: { type: 'string', enum: ['overview', 'todos', 'schedule', 'habits', 'ai', 'report'], description: '目标页面' },
     }, ['view']),
   },
 ]
@@ -187,19 +204,74 @@ export function buildDataSnapshot(data: AppData): string {
     lines.push(`- id:${c.id} 周${WEEKDAYS[c.weekday % 7]} ${c.start}-${c.end} ${cut(c.name, 40)}${marks ? `(${marks})` : ''}`)
   }
 
+  lines.push('')
+  const pending = data.reminders.filter((r) => !r.firedAt).sort((a, b) => a.dueAt.localeCompare(b.dueAt))
+  lines.push(`[提醒] 未触发 ${pending.length} 条`)
+  for (const r of pending) {
+    lines.push(`- id:${r.id} ${cut(r.title, 60)} @${r.dueAt}`)
+  }
+
   return lines.join('\n')
 }
 
 export function buildSystemPrompt(data: AppData): string {
   const now = new Date()
   const today = todayStr(now)
+  const hm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
   return [
-    `你是「个人工作台」(一个本地个人效率工具,含待办/课表/习惯打卡)里的 AI 助手。今天是 ${today} 星期${WEEKDAYS[now.getDay()]}。`,
+    `你是「个人工作台」(一个本地个人效率工具,含待办/课表/习惯打卡/定时提醒)里的 AI 助手。今天是 ${today} 星期${WEEKDAYS[now.getDay()]},现在时刻 ${hm}。`,
     '下面是用户的实时数据快照。回答数据相关问题时以快照为准;用户要求修改数据时调用工具完成,不要编造 id,只用快照里出现的 id。',
     '修改完成后用一句话向用户确认;闲聊与问答保持简洁,全程使用中文。',
     '',
     buildDataSnapshot(data),
   ].join('\n')
+}
+
+// ---------- 主动巡查:自动读取待办/习惯/课表并生成提醒 ----------
+
+/** 组装主动巡查的一次性消息(无工具调用),让模型挑出此刻值得提醒的事项 */
+export function buildBriefingMessages(data: AppData): UpstreamMessage[] {
+  const now = new Date()
+  const hm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+  return [
+    {
+      role: 'system',
+      content:
+        '你是「个人工作台」的主动提醒引擎。根据数据快照与当前时刻,找出此刻最值得提醒用户的事项:' +
+        '已逾期或今天/明天截止的未完成待办、今天还没打卡的习惯、今天剩余的课(一小时内要上的优先)。' +
+        '最多 4 条,每条一行、以「·」开头,一行只说一件事,写明时间/课名/习惯名,简洁具体;' +
+        '不要寒暄、不要解释、不要 markdown。若没有值得提醒的,只输出:无',
+    },
+    {
+      role: 'user',
+      content: `现在是 ${todayStr(now)} 星期${WEEKDAYS[now.getDay()]} ${hm}。数据快照如下:\n\n${buildDataSnapshot(data)}\n\n请给出此刻的提醒。`,
+    },
+  ]
+}
+
+/** 解析巡查输出为事项数组;「无」或解析不出条目时返回空数组 */
+export function parseBriefing(text: string): string[] {
+  const trimmed = text.trim()
+  if (!trimmed || /^无+$/.test(trimmed)) return []
+  const lines = trimmed
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .filter((l) => !/^(好的|以下是|当然|提醒如下)/.test(l))
+    .map((l) => l.replace(/^\s*(?:[·•\-*>]|\d+[.、)])\s*/, ''))
+    .filter((l) => l && l !== '无')
+  const unique = [...new Set(lines)]
+  // 模型没用列表格式时,短回答直接当一条,长篇输出视为无效
+  if (unique.length === 0) return trimmed.length <= 60 ? [trimmed] : []
+  return unique.slice(0, 4)
+}
+
+/** 调一次 AI 生成巡查提醒;失败由调用方决定如何处理 */
+export async function fetchAiBriefing(data: AppData, signal?: AbortSignal): Promise<string[]> {
+  const res = await aiChat({ messages: buildBriefingMessages(data) }, signal)
+  const msg = res.message
+  if (!msg?.content) throw new Error('AI 没有返回内容')
+  return parseBriefing(msg.content)
 }
 
 // ---------- 周报点评 ----------

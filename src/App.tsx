@@ -10,6 +10,7 @@ import AiPanel from './components/AiPanel'
 import ReportPanel from './components/ReportPanel'
 import LinksBar from './components/LinksBar'
 import StartPageModal from './components/StartPageModal'
+import ReminderPopup from './components/ReminderPopup'
 import { BrandMark, IconAi, IconCalendar, IconGitHub, IconGrip, IconHabit, IconKeys, IconOverview, IconReport, IconSchedule, IconTodo } from './components/icons'
 import CommandPalette, { type Command } from './components/CommandPalette'
 
@@ -1046,6 +1047,9 @@ export default function App() {
             />
           </div>
         )}
+
+        {/* 到期提醒 + AI 主动巡查弹窗:锚定 AI 悬浮球 */}
+        <ReminderPopup data={data} update={update} />
       </main>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />

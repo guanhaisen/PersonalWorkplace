@@ -60,10 +60,21 @@ export interface LinkItem {
   url: string
 }
 
+export interface Reminder {
+  id: string
+  title: string
+  /** 触发时间,本地时间 "YYYY-MM-DD HH:mm"(该格式字典序即时间序) */
+  dueAt: string
+  createdAt: string
+  /** 已触发(弹过提醒)的时间 ISO 字符串;缺省 = 还没到点 */
+  firedAt?: string
+}
+
 export interface AppData {
   todos: Todo[]
   courses: Course[]
   habits: Habit[]
   chats: ChatMsg[]
   links: LinkItem[]
+  reminders: Reminder[]
 }
