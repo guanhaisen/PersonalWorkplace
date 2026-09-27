@@ -67,7 +67,7 @@ export default function AiPanel({ data, update, onNavigate, onClose, autoFocus }
       .catch(() => setCfg(null))
   }, [settingsOpen])
 
-  // 命令面板「询问 AI 助手」:切到本页并聚焦输入框
+  // 命令面板「询问 Miku」:切到本页并聚焦输入框
   useEffect(() => {
     const focus = () => inputRef.current?.focus()
     window.addEventListener('workbench:ai-focus', focus)
@@ -323,7 +323,7 @@ export default function AiPanel({ data, update, onNavigate, onClose, autoFocus }
       <header className="p-head">
         <h2>
           <span className="tag">AI</span>
-          <i>/</i>AI 助手
+          <i>/</i>Miku
         </h2>
         <div className="ai-head-actions">
           {configured && (

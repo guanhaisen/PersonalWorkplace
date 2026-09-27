@@ -16,7 +16,7 @@ const GAP = 12
 const BRIEFING_GAP_MS = 60 * 60 * 1000 // 巡查间隔:每小时;打开应用后先查一次
 const BRIEFING_SNOOZE_MS = 10 * 60 * 1000 // 「稍后」:10 分钟后重新浮现
 
-// 弹窗锚定 AI 悬浮球上方(与聊天窗同款锚定思路);悬浮球不在 DOM(AI 助手页)时退到右下角。
+// 弹窗锚定 AI 悬浮球上方(与聊天窗同款锚定思路);悬浮球不在 DOM(Miku 页)时退到右下角。
 // 用 bottom 锚定,内容变多时弹窗自动向上生长,不会盖住悬浮球。
 function anchorToFab(): Pos {
   const fab = document.querySelector<HTMLElement>('.ai-fab')
@@ -231,7 +231,7 @@ export default function ReminderPopup({ data, update }: Props) {
             </button>
           )}
           {aiCfg && !aiConfigured && (
-            <span className="rem-pop-hint" title="在 AI 助手的设置里填好接口与 Key">
+            <span className="rem-pop-hint" title="在 Miku 的设置里填好接口与 Key">
               配置 AI 后可自动巡查待办 · 习惯 · 课表
             </span>
           )}

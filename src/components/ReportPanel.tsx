@@ -241,7 +241,7 @@ export default function ReportPanel({ data }: { data: AppData }) {
             让 AI 点评{week.label}
           </button>
         ) : (
-          <div className="empty-hint">在「AI 助手」页配置服务后,可让 AI 点评{week.label}</div>
+          <div className="empty-hint">在「Miku」页配置服务后,可让 AI 点评{week.label}</div>
         )}
         {aiError && (
           <div className="ai-error">

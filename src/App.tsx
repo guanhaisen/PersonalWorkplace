@@ -73,7 +73,7 @@ const NAV_META: Record<ViewKey, { label: string; icon: JSX.Element }> = {
   todos: { label: '待办', icon: <IconTodo /> },
   schedule: { label: '课表', icon: <IconSchedule /> },
   habits: { label: '习惯', icon: <IconHabit /> },
-  ai: { label: 'AI 助手', icon: <IconAi /> },
+  ai: { label: 'Miku', icon: <IconAi /> },
   report: { label: '周报', icon: <IconReport /> },
 }
 
@@ -84,7 +84,7 @@ const CAPSULE_META: Record<PanelId, { label: string; icon: JSX.Element }> = {
   cal: { label: '日历', icon: <IconCalendar /> },
   hab: { label: '习惯打卡', icon: <IconHabit /> },
   keys: { label: '快捷键', icon: <IconKeys /> },
-  ai: { label: 'AI 助手', icon: <IconAi /> },
+  ai: { label: 'Miku', icon: <IconAi /> },
   report: { label: '周报', icon: <IconReport /> },
 }
 
@@ -444,7 +444,7 @@ export default function App() {
     }
   }
 
-  // Esc 关闭聊天窗;进入 AI 助手页时收起(那边就是完整聊天界面)
+  // Esc 关闭聊天窗;进入 Miku 页时收起(那边就是完整聊天界面)
   useEffect(() => {
     if (!fabChatOpen) return
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setFabChatOpen(false)
@@ -705,7 +705,7 @@ export default function App() {
     })),
     { id: 'new-course', label: '新建课程', hint: 'N', run: () => { setView('schedule'); emit('workbench:new-course') } },
     { id: 'new-todo', label: '新建待办', hint: 'T', run: () => { setView('todos'); emit('workbench:focus-todo-input') } },
-    { id: 'ask-ai', label: '询问 AI 助手', run: () => { setView('ai'); setTimeout(() => emit('workbench:ai-focus'), 0) } },
+    { id: 'ask-ai', label: '询问 Miku', run: () => { setView('ai'); setTimeout(() => emit('workbench:ai-focus'), 0) } },
     { id: 'export', label: '导出全部数据', run: handleExport },
     ...(mikuHidden ? [{ id: 'show-miku', label: '显示 Miku 悬浮球', run: showMiku }] : []),
   ]
@@ -1143,7 +1143,7 @@ export default function App() {
           )
         })()}
 
-        {/* 右下角:AI 助手快捷入口(Live2D Miku),全页面常驻;可拖动,点击弹出就地聊天窗,
+        {/* 右下角:Miku 快捷入口(Live2D),全页面常驻;可拖动,点击弹出就地聊天窗,
             右键打开桌宠菜单;「隐藏她」后经 ⌘K 命令面板唤回 */}
         {!mikuHidden && (
           <button
@@ -1152,7 +1152,7 @@ export default function App() {
               mikuQQ ? 'miku-qq' : ''
             }`}
             style={{ ...(fabPos ?? {}), '--miku-scale': mikuScale } as CSSProperties}
-            title="AI 助手 Miku · 右键更多 · 拖动可换位置"
+            title="Miku · 右键更多 · 拖动可换位置"
             onPointerDown={onFabPointerDown}
             onPointerMove={onFabPointerMove}
             onPointerUp={endFabDrag}
@@ -1166,7 +1166,7 @@ export default function App() {
                 fabMoved.current = false
                 return
               }
-              // 无论哪个页面点她都有互动反馈;AI 助手页本身是完整聊天界面,不再弹就地小窗
+              // 无论哪个页面点她都有互动反馈;Miku 页本身是完整聊天界面,不再弹就地小窗
               window.dispatchEvent(new CustomEvent(MIKU_TAP_EVENT))
               if (view === 'ai') return
               // 弹窗延迟弹出,双击的第二下会取消(双击 = 切换 QQ 形态)

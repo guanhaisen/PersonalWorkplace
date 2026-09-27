@@ -1,4 +1,4 @@
-// AI 助手:配置接口封装、OpenAI 兼容请求、工具 Schema 与数据快照构建。
+// Miku(原 AI 助手):配置接口封装、OpenAI 兼容请求、工具 Schema 与数据快照构建。
 // 密钥只存在服务端(data/ai-config.json),前端只传消息与工具定义。
 import type { AppData } from './types'
 import { streak, todayStr } from './api'
@@ -219,7 +219,7 @@ export function buildSystemPrompt(data: AppData): string {
   const today = todayStr(now)
   const hm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
   return [
-    `你是「个人工作台」(一个本地个人效率工具,含待办/课表/习惯打卡/定时提醒)里的 AI 助手。今天是 ${today} 星期${WEEKDAYS[now.getDay()]},现在时刻 ${hm}。`,
+    `你是「个人工作台」(一个本地个人效率工具,含待办/课表/习惯打卡/定时提醒)里的助手 Miku。今天是 ${today} 星期${WEEKDAYS[now.getDay()]},现在时刻 ${hm}。`,
     '下面是用户的实时数据快照。回答数据相关问题时以快照为准;用户要求修改数据时调用工具完成,不要编造 id,只用快照里出现的 id。',
     '修改完成后用一句话向用户确认;闲聊与问答保持简洁,全程使用中文。',
     '',

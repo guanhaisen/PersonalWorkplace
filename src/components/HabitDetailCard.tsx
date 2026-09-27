@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Habit } from '../types'
 import type { UpdateFn } from '../App'
 import { streak, todayStr } from '../api'
@@ -13,11 +13,57 @@ const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'] // 周一开�
 
 export default function HabitDetailCard({ habit, update, onClose }: Props) {
   const [draft, setDraft] = useState(habit.name)
+  const nameRef = useRef<HTMLInputElement>(null)
   const [cursor, setCursor] = useState(() => {
     const t = new Date()
     return { year: t.getFullYear(), month: t.getMonth() }
   })
   const today = todayStr()
+
+  // 名称超出输入框宽度时缓慢向右滑动(跑马灯):到结尾停顿约 1.2s → 回到开头停顿约 0.7s → 循环,
+  // 放得下则不动;聚焦编辑时完全交给浏览器按光标滚动,失焦自动恢复
+  useEffect(() => {
+    const el = nameRef.current
+    if (!el) return
+    const SPEED = 70 // px/s
+    let raf = 0
+    let last = performance.now()
+    let phase: 'run' | 'holdEnd' | 'holdStart' = 'run'
+    let phaseUntil = 0
+    const tick = (now: number) => {
+      raf = requestAnimationFrame(tick)
+      const max = el.scrollWidth - el.clientWidth
+      // 编辑中不抢光标;放得下就归零静止
+      if (document.activeElement === el || max <= 0) {
+        last = now
+        if (max <= 0) el.scrollLeft = 0
+        return
+      }
+      const dt = Math.min(now - last, 100) / 1000
+      last = now
+      if (phase === 'run') {
+        const next = el.scrollLeft + SPEED * dt
+        if (next >= max) {
+          el.scrollLeft = max
+          phase = 'holdEnd'
+          phaseUntil = now + 1200
+        } else {
+          el.scrollLeft = next
+        }
+        return
+      }
+      if (now < phaseUntil) return
+      if (phase === 'holdEnd') {
+        el.scrollLeft = 0
+        phase = 'holdStart'
+        phaseUntil = now + 700
+      } else {
+        phase = 'run'
+      }
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
@@ -92,6 +138,7 @@ export default function HabitDetailCard({ habit, update, onClose }: Props) {
         </header>
 
         <input
+          ref={nameRef}
           className="hb-name-edit"
           value={draft}
           placeholder="习惯名称"
