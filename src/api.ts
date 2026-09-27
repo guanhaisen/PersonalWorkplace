@@ -2,13 +2,72 @@ import type { AppData } from './types'
 
 export type CollectionKey = 'todos' | 'courses' | 'habits' | 'chats' | 'links' | 'reminders'
 
+/** 带 HTTP 状态码的错误:401 表示未登录/会话过期,调用方据此回到登录页 */
+export class ApiError extends Error {
+  status: number
+  constructor(status: number, message: string) {
+    super(message)
+    this.status = status
+  }
+}
+
 async function req<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     headers: { 'Content-Type': 'application/json' },
     ...options,
   })
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+  if (!res.ok) throw new ApiError(res.status, `${res.status} ${res.statusText}`)
   return res.json() as Promise<T>
+}
+
+/** 取错误响应里的中文 message(认证端点用) */
+async function errorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const data = await res.json()
+    return data?.message || fallback
+  } catch {
+    return fallback
+  }
+}
+
+// ---------- 认证 ----------
+
+/** 启动时问一下当前会话;未登录返回 null(不抛错) */
+export async function me(): Promise<string | null> {
+  try {
+    const res = await fetch('/api/auth/me')
+    if (!res.ok) return null
+    const data = await res.json()
+    return typeof data?.username === 'string' && data.username ? data.username : null
+  } catch {
+    return null
+  }
+}
+
+export async function login(username: string, password: string): Promise<string> {
+  const res = await fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  })
+  if (!res.ok) throw new ApiError(res.status, await errorMessage(res, '登录失败,请稍后再试'))
+  const data = await res.json()
+  return data.username as string
+}
+
+export async function register(username: string, password: string): Promise<string> {
+  const res = await fetch('/api/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  })
+  if (!res.ok) throw new ApiError(res.status, await errorMessage(res, '注册失败,请稍后再试'))
+  const data = await res.json()
+  return data.username as string
+}
+
+export async function logout(): Promise<void> {
+  await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {})
 }
 
 export function loadAll(): Promise<AppData> {

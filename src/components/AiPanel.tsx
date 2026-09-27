@@ -23,6 +23,8 @@ interface Props {
   onClose?: () => void
   /** 挂载后自动聚焦输入框(悬浮聊天窗用) */
   autoFocus?: boolean
+  /** bubble:悬浮球轻量模式——不显示历史,只显示输入框和最新一条回复的气泡 */
+  variant?: 'panel' | 'bubble'
 }
 
 // 预置服务商:点击即把地址与推荐模型填入表单
@@ -35,11 +37,13 @@ const PRESETS: { label: string; baseUrl: string; model: string }[] = [
 const VIEWS: ViewKey[] = ['overview', 'todos', 'schedule', 'habits', 'ai', 'report']
 const nowIso = () => new Date().toISOString()
 
-export default function AiPanel({ data, update, onNavigate, onClose, autoFocus }: Props) {
+export default function AiPanel({ data, update, onNavigate, onClose, autoFocus, variant = 'panel' }: Props) {
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [toolNote, setToolNote] = useState('')
   const [error, setError] = useState('')
+  // 气泡模式:本次快速提问已收到过回复(打开时只显示输入条,不翻旧回复)
+  const [quickReplied, setQuickReplied] = useState(false)
   const [cfg, setCfg] = useState<AiConfigInfo | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [usageOpen, setUsageOpen] = useState(false)
@@ -273,6 +277,8 @@ export default function AiPanel({ data, update, onNavigate, onClose, autoFocus }
       ])
       // 让 Miku 悬浮球做个表情(未启用 Live2D 时无监听方,无副作用)
       window.dispatchEvent(new CustomEvent(MIKU_EXPRESS_EVENT))
+      // 气泡模式:回复已到,弹出气泡
+      setQuickReplied(true)
     } catch (err) {
       if ((err as Error)?.name !== 'AbortError') setError((err as Error)?.message || '请求失败,请重试')
     } finally {
@@ -317,6 +323,53 @@ export default function AiPanel({ data, update, onNavigate, onClose, autoFocus }
     document.addEventListener('mousedown', close)
     return () => document.removeEventListener('mousedown', close)
   }, [usageOpen])
+
+  // 轻量气泡模式:悬浮球点击后的快速提问——不显示历史,只显示输入条,
+  // 最新回复/工具进度/错误都以气泡形式浮在输入条上方,指向 Miku。
+  // 对话仍走同一套持久化 chats(完整面板里可见上下文),工具调用逻辑完全复用。
+  if (variant === 'bubble') {
+    const lastAssistant = [...chats].reverse().find((m) => m.role === 'assistant')
+    return (
+      <div className="miku-quick" onMouseDown={(e) => e.stopPropagation()}>
+        {(busy || error || quickReplied) && (
+          <div className={`miku-bubble${error ? ' err' : ''}`}>
+            {busy ? toolNote || '思考中…' : error || lastAssistant?.content}
+          </div>
+        )}
+        {!configured && (
+          <div className="miku-quick-cfg">
+            还没配置 AI 服务,
+            <button className="miku-quick-cfg-btn" onClick={() => setSettingsOpen(true)}>
+              去配置
+            </button>
+          </div>
+        )}
+        <div className="miku-quick-bar">
+          <input
+            ref={inputRef}
+            className="miku-quick-in"
+            value={input}
+            placeholder={configured ? '问 Miku 点什么…' : '先配置 AI 服务'}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing) send()
+            }}
+            disabled={busy}
+          />
+          {busy ? (
+            <button className="miku-quick-btn stop" onClick={() => abortRef.current?.abort()} title="停止">
+              ■
+            </button>
+          ) : (
+            <button className="miku-quick-btn" onClick={send} disabled={!input.trim()} title="发送">
+              ↑
+            </button>
+          )}
+        </div>
+        {settingsOpen && <AiSettings onClose={() => setSettingsOpen(false)} onSaved={setCfg} />}
+      </div>
+    )
+  }
 
   return (
     <div className="panel panel-ai">

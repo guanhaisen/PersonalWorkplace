@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type CSSProperties } from 'react'
 import type { AppData } from './types'
-import { loadAll, saveCollection, nowLocalStr, type CollectionKey } from './api'
+import { ApiError, loadAll, logout, me, saveCollection, nowLocalStr, type CollectionKey } from './api'
+import LoginView from './components/LoginView'
 import TodoPanel from './components/TodoPanel'
 import CalendarPanel from './components/CalendarPanel'
 import SchedulePanel from './components/SchedulePanel'
@@ -117,6 +118,9 @@ const WEEKDAYS_EN = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT']
 const GITHUB_REPO = 'https://github.com/guanhaisen/PersonalWorkplace'
 
 export default function App() {
+  // ---------- 登录会话:先确认身份,再拉当前账号的数据 ----------
+  const [authUser, setAuthUser] = useState<string | null>(null)
+  const [authChecking, setAuthChecking] = useState(true)
   const [data, setData] = useState<AppData | null>(null)
   const [loadError, setLoadError] = useState(false)
   const [saveState, setSaveState] = useState<SaveState>('idle')
@@ -317,9 +321,9 @@ export default function App() {
   const [fabDragging, setFabDragging] = useState(false)
   // 区分拖动与点击:pointerup 后由 onClick 读取并复位
   const fabMoved = useRef(false)
-  // 悬浮球点击弹出就地聊天窗(不跳转页面);位置锚定按钮当前所在处
+  // 悬浮球点击弹出快速提问(轻量输入条 + 回复气泡);底部锚在 Miku 头顶上方,气泡变多向上生长
   const [fabChatOpen, setFabChatOpen] = useState(false)
-  const [fabChatPos, setFabChatPos] = useState<{ left: number; top: number } | null>(null)
+  const [fabChatPos, setFabChatPos] = useState<{ left: number; bottom: number } | null>(null)
   // 待弹出的聊天窗定时器:双击第二下会取消它
   const fabPopTimer = useRef<number | null>(null)
   // 问候语名字:个人偏好,存 localStorage
@@ -376,19 +380,14 @@ export default function App() {
       setFabChatOpen(false)
       return
     }
-    // 优先在按钮上方右对齐;上方放不下翻到按钮下方;始终钳制在视口内
+    // 右对齐 Miku 右缘,底部锚在 Miku 头顶上方 12px;气泡变长时向上生长
     const vw = window.innerWidth
-    const vh = window.innerHeight
-    const W = Math.min(380, vw - 24)
-    const H = Math.min(520, vh - 140)
+    const W = Math.min(320, vw - 24)
     const gap = 12
     const r = fabRef.current?.getBoundingClientRect()
-    let left = r ? r.right - W : vw - 30 - W
-    let top = r ? r.top - gap - H : vh - 96 - H
-    if (r && top < gap) top = r.bottom + gap
-    left = Math.min(Math.max(left, gap), Math.max(vw - W - gap, gap))
-    top = Math.min(Math.max(top, gap), Math.max(vh - H - gap, gap))
-    setFabChatPos({ left: Math.round(left), top: Math.round(top) })
+    const left = Math.min(Math.max((r ? r.right : vw - 30) - W, 8), Math.max(vw - W - 8, 8))
+    const bottom = r ? Math.round(window.innerHeight - r.top + gap) : 96
+    setFabChatPos({ left: Math.round(left), bottom })
     setFabChatOpen(true)
   }
 
@@ -450,6 +449,18 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setFabChatOpen(false)
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
+  }, [fabChatOpen])
+
+  // 点击气泡组件与 Miku 以外的区域时收起快速提问(点 Miku 本身由其 onClick 正常切换)
+  useEffect(() => {
+    if (!fabChatOpen) return
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null
+      if (t && (t.closest('.ai-pop') || t.closest('.ai-fab'))) return
+      setFabChatOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
   }, [fabChatOpen])
 
   useEffect(() => {
@@ -575,14 +586,55 @@ export default function App() {
     try {
       setData(await loadAll())
       setLoadError(false)
-    } catch {
+    } catch (err) {
+      // 401 = 会话过期/已在别处登出,回到登录页重新建立会话
+      if (err instanceof ApiError && err.status === 401) {
+        setAuthUser(null)
+        return
+      }
       setLoadError(true)
     }
   }, [])
 
+  // 启动:先问会话,已登录才加载数据
   useEffect(() => {
-    load()
-  }, [load])
+    let cancelled = false
+    me().then((username) => {
+      if (cancelled) return
+      setAuthUser(username)
+      setAuthChecking(false)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (authUser) load()
+  }, [authUser, load])
+
+  const handleAuthed = useCallback((username: string) => {
+    // 登录/注册成功:数据加载由 authUser 变化触发的 effect 接手
+    setAuthUser(username)
+  }, [])
+
+  const handleLogout = useCallback(async () => {
+    await logout()
+    // 作废未落盘的防抖保存与失败重试,避免串到下一个账号
+    failedKeys.current.clear()
+    for (const t of Object.values(timers.current)) clearTimeout(t)
+    timers.current = {}
+    for (const t of Object.values(retryTimers.current)) clearTimeout(t)
+    retryTimers.current = {}
+    retryCount.current = {}
+    setData(null)
+    setSaveState('idle')
+    setLoadError(false)
+    setPaletteOpen(false)
+    setFabChatOpen(false)
+    setView('overview')
+    setAuthUser(null)
+  }, [])
 
   // 整集合更新:先改本地状态,再防抖 400ms 后整体保存到后端。
   // 保存失败进入重试队列(指数退避,窗口聚焦/联网时立即重试),
@@ -599,7 +651,16 @@ export default function App() {
       failedKeys.current.delete(key)
       retryCount.current[key] = 0
       setSaveState(failedKeys.current.size ? 'error' : 'saved')
-    } catch {
+    } catch (err) {
+      // 会话失效:停止重试,清空本地数据回到登录页
+      if (err instanceof ApiError && err.status === 401) {
+        failedKeys.current.clear()
+        for (const t of Object.values(retryTimers.current)) clearTimeout(t)
+        retryTimers.current = {}
+        setData(null)
+        setAuthUser(null)
+        return
+      }
       failedKeys.current.add(key)
       const delays = [2000, 4000, 8000, 15000, 30000]
       const n = retryCount.current[key] ?? 0
@@ -721,7 +782,7 @@ export default function App() {
       window.alert('文件不是有效的 JSON。')
       return
     }
-    if (!window.confirm('导入会覆盖当前全部数据(服务端会先备份),确认继续?')) return
+    if (!window.confirm('导入会覆盖当前账号的全部数据,确认继续?')) return
     try {
       const res = await fetch('/api/import', {
         method: 'POST',
@@ -744,6 +805,11 @@ export default function App() {
       window.alert('导入失败,请检查文件格式。')
     }
   }
+
+  // ---------- 登录门控:未登录只渲染登录页,其余一概不挂载 ----------
+
+  if (authChecking) return <div className="center-hint">加载中…</div>
+  if (!authUser) return <LoginView onAuthed={handleAuthed} />
 
   if (loadError) {
     return (
@@ -916,6 +982,15 @@ export default function App() {
         </nav>
 
         <div className="sidebar-foot">
+          <div className="user-line">
+            <span className="user-name" title={`当前账号:${authUser}`}>
+              <i className="user-dot" />
+              {authUser}
+            </span>
+            <button className="data-link" onClick={handleLogout} title="退出当前账号">
+              退出
+            </button>
+          </div>
           <div className="save-line">
             <span className={`pulse ${saveState === 'error' ? 'err' : ''}`} />
             <span className="save-text">
@@ -929,7 +1004,7 @@ export default function App() {
           <div className="sf">
             <span>LOCAL</span>
             <em>·</em>
-            <span>JSON</span>
+            <span>SQLITE</span>
           </div>
           <div className="data-links">
             <button className="data-link" onClick={handleExport} title="下载全部数据为 JSON">
@@ -1204,6 +1279,7 @@ export default function App() {
               onNavigate={setView}
               onClose={() => setFabChatOpen(false)}
               autoFocus
+              variant="bubble"
             />
           </div>
         )}

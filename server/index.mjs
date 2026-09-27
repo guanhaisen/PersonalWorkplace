@@ -1,75 +1,35 @@
 import express from 'express'
-import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  COLLECTIONS,
+  backupDatabase,
+  cleanExpiredSessions,
+  createSession,
+  createUser,
+  deleteSession,
+  findUserByUsername,
+  getSessionUser,
+  readAiConfig,
+  readUserCollections,
+  readUserSettings,
+  verifyPassword,
+  writeAiConfig,
+  writeUserCollection,
+  writeUserSettings,
+} from './db.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(__dirname, '..')
-const DATA_DIR = path.join(ROOT, 'data')
 const DIST_DIR = path.join(ROOT, 'dist')
 const PORT = process.env.PORT || 3001
 // 默认只监听本机,局域网设备不可达;确需开放时启动前设 HOST=0.0.0.0
 const HOST = process.env.HOST || '127.0.0.1'
 
-const COLLECTIONS = ['todos', 'courses', 'habits', 'chats', 'links', 'reminders']
-const DEFAULTS = { todos: [], courses: [], habits: [], chats: [], links: [], reminders: [] }
-const BACKUP_DIR = path.join(DATA_DIR, 'backups')
-const BACKUP_KEEP = 10 // 每个集合保留的最近备份数
-const BACKUP_MIN_GAP_MS = 60_000 // 距上次备份不足 1 分钟则跳过(防抖动写入刷屏)
-
-await fs.mkdir(DATA_DIR, { recursive: true })
-
-async function readCollection(name) {
-  try {
-    return JSON.parse(await fs.readFile(path.join(DATA_DIR, `${name}.json`), 'utf-8'))
-  } catch {
-    return structuredClone(DEFAULTS[name])
-  }
-}
-
-// 写入前把当前文件滚动备份到 data/backups/,防误写/误清
-async function backupCollection(name) {
-  const file = path.join(DATA_DIR, `${name}.json`)
-  try {
-    await fs.access(file)
-  } catch {
-    return // 首次写入,没有旧文件
-  }
-  await fs.mkdir(BACKUP_DIR, { recursive: true })
-  const existing = (await fs.readdir(BACKUP_DIR)).filter((f) => f.startsWith(`${name}.`)).sort()
-  if (existing.length > 0) {
-    const newest = existing[existing.length - 1]
-    const stat = await fs.stat(path.join(BACKUP_DIR, newest))
-    if (Date.now() - stat.mtimeMs < BACKUP_MIN_GAP_MS) return
-  }
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-  await fs.copyFile(file, path.join(BACKUP_DIR, `${name}.${stamp}.json`))
-  for (const old of existing.slice(0, Math.max(0, existing.length + 1 - BACKUP_KEEP))) {
-    await fs.rm(path.join(BACKUP_DIR, old), { force: true })
-  }
-}
-
-// Windows 下目标文件偶发被占用(EPERM),重试后再放弃
-async function renameWithRetry(from, to) {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      await fs.rename(from, to)
-      return
-    } catch (err) {
-      if (attempt >= 4 || !['EPERM', 'EACCES', 'ENOENT'].includes(err.code)) throw err
-      await new Promise((r) => setTimeout(r, 100 * (attempt + 1)))
-    }
-  }
-}
-
-// 先写临时文件再 rename,避免写一半时崩溃损坏数据
-async function writeCollection(name, items) {
-  await backupCollection(name)
-  const file = path.join(DATA_DIR, `${name}.json`)
-  const tmp = `${file}.tmp`
-  await fs.writeFile(tmp, JSON.stringify(items, null, 2), 'utf-8')
-  await renameWithRetry(tmp, file)
-}
+const COOKIE_NAME = 'wb_session'
+const SESSION_TTL_S = 30 * 24 * 3600
+// 用户名:2-24 位中文、字母、数字或下划线
+const USERNAME_RE = /^[\u4e00-\u9fa5A-Za-z0-9_]{2,24}$/
 
 const app = express()
 app.use(express.json({ limit: '5mb' }))
@@ -77,36 +37,117 @@ app.use(express.json({ limit: '5mb' }))
 // async 处理器的异常统一转到错误中间件,避免进程崩溃
 const h = (fn) => (req, res, next) => Promise.resolve(fn(req, res)).catch(next)
 
-app.get('/api/data', h(async (_req, res) => {
-  const data = {}
-  for (const name of COLLECTIONS) data[name] = await readCollection(name)
-  res.json(data)
+// ---------- 会话:手工解析 Cookie,不引 cookie-parser ----------
+
+function parseCookies(req) {
+  const out = {}
+  const header = req.headers.cookie
+  if (!header) return out
+  for (const part of header.split(';')) {
+    const idx = part.indexOf('=')
+    if (idx === -1) continue
+    out[part.slice(0, idx).trim()] = decodeURIComponent(part.slice(idx + 1).trim())
+  }
+  return out
+}
+
+const setSessionCookie = (res, token) =>
+  res.setHeader(
+    'Set-Cookie',
+    `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL_S}`
+  )
+const clearSessionCookie = (res) =>
+  res.setHeader('Set-Cookie', `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`)
+
+function requireUser(req, res, next) {
+  const token = parseCookies(req)[COOKIE_NAME]
+  const user = token ? getSessionUser(token) : null
+  if (!user) {
+    res.status(401).json({ error: 'UNAUTHORIZED', message: '请先登录' })
+    return
+  }
+  req.user = user
+  req.sessionToken = token
+  next()
+}
+
+// ---------- 认证:开放注册,密码 scrypt 加盐哈希存库 ----------
+
+app.post('/api/auth/register', h(async (req, res) => {
+  const username = String(req.body?.username || '').trim()
+  const password = String(req.body?.password || '')
+  if (!USERNAME_RE.test(username)) {
+    res.status(400).json({ error: 'BAD_USERNAME', message: '用户名需为 2-24 位中文、字母、数字或下划线' })
+    return
+  }
+  if (password.length < 6) {
+    res.status(400).json({ error: 'BAD_PASSWORD', message: '密码至少 6 位' })
+    return
+  }
+  const user = createUser(username, password) // 重名抛 USERNAME_TAKEN → 错误中间件
+  const token = createSession(user.id)
+  setSessionCookie(res, token)
+  res.json({ username: user.username })
+}))
+
+app.post('/api/auth/login', h(async (req, res) => {
+  const user = findUserByUsername(String(req.body?.username || '').trim())
+  const ok = user && verifyPassword(user, String(req.body?.password || ''))
+  if (!ok) {
+    res.status(401).json({ error: 'BAD_CREDENTIALS', message: '用户名或密码错误' })
+    return
+  }
+  const token = createSession(user.id)
+  setSessionCookie(res, token)
+  res.json({ username: user.username })
+}))
+
+app.post('/api/auth/logout', h(async (req, res) => {
+  const token = parseCookies(req)[COOKIE_NAME]
+  if (token) deleteSession(token)
+  clearSessionCookie(res)
+  res.json({ ok: true })
+}))
+
+app.get('/api/auth/me', h(async (req, res) => {
+  const token = parseCookies(req)[COOKIE_NAME]
+  const user = token ? getSessionUser(token) : null
+  if (!user) {
+    res.status(401).json({ error: 'UNAUTHORIZED' })
+    return
+  }
+  res.json({ username: user.username })
+}))
+
+// ---------- 集合数据:全部按当前用户隔离 ----------
+
+app.get('/api/data', requireUser, h(async (req, res) => {
+  res.json(readUserCollections(req.user.id, COLLECTIONS))
 }))
 
 for (const name of COLLECTIONS) {
-  app.put(`/api/${name}`, h(async (req, res) => {
+  app.put(`/api/${name}`, requireUser, h(async (req, res) => {
     const payload = Array.isArray(req.body) ? req.body : req.body?.[name]
     if (!Array.isArray(payload)) {
       res.status(400).json({ error: `expected a JSON array for ${name}` })
       return
     }
-    await writeCollection(name, payload)
+    writeUserCollection(req.user.id, name, payload)
     res.json({ ok: true })
   }))
 }
 
-// 导出全部数据(JSON 下载)
-app.get('/api/export', h(async (_req, res) => {
-  const data = {}
-  for (const name of COLLECTIONS) data[name] = await readCollection(name)
+// 导出当前用户全部数据(JSON 下载)
+app.get('/api/export', requireUser, h(async (req, res) => {
+  const data = readUserCollections(req.user.id, COLLECTIONS)
   const stamp = new Date().toISOString().slice(0, 10)
   res.setHeader('Content-Disposition', `attachment; filename="workbench-${stamp}.json"`)
   res.json(data)
 }))
 
-// 导入:覆盖文件中给出的集合(写入前会逐集合备份当前数据)。
+// 导入:覆盖文件中给出的集合,只作用于当前用户。
 // 缺失的集合(如旧备份文件没有 chats)保持原样,不强制全量。
-app.post('/api/import', h(async (req, res) => {
+app.post('/api/import', requireUser, h(async (req, res) => {
   const body = req.body || {}
   const provided = COLLECTIONS.filter((name) => body[name] !== undefined)
   if (provided.length === 0) {
@@ -119,70 +160,41 @@ app.post('/api/import', h(async (req, res) => {
       return
     }
   }
-  for (const name of provided) await writeCollection(name, body[name])
+  for (const name of provided) writeUserCollection(req.user.id, name, body[name])
   res.json({ ok: true })
 }))
 
-// ---------- 通用设置:学期开始等需要跨浏览器同步的小配置 ----------
-const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json')
+// ---------- 通用设置:学期开始等,按用户存储 ----------
 
-async function readSettings() {
-  try {
-    return JSON.parse(await fs.readFile(SETTINGS_FILE, 'utf-8'))
-  } catch {
-    return {}
-  }
-}
-
-app.get('/api/settings', h(async (_req, res) => {
-  res.json(await readSettings())
+app.get('/api/settings', requireUser, h(async (req, res) => {
+  res.json(readUserSettings(req.user.id))
 }))
 
-app.put('/api/settings', h(async (req, res) => {
+app.put('/api/settings', requireUser, h(async (req, res) => {
   const body = req.body || {}
   if (typeof body !== 'object' || Array.isArray(body)) {
     res.status(400).json({ error: 'expected a JSON object' })
     return
   }
-  const merged = { ...(await readSettings()), ...body }
-  const tmp = `${SETTINGS_FILE}.tmp`
-  await fs.writeFile(tmp, JSON.stringify(merged, null, 2), 'utf-8')
-  await renameWithRetry(tmp, SETTINGS_FILE)
-  res.json(merged)
+  res.json(writeUserSettings(req.user.id, body))
 }))
 
-// ---------- AI 助手:配置存 data/ai-config.json(gitignore,含密钥) ----------
+// ---------- AI 助手:配置每用户独立,密钥永不下发到浏览器 ----------
 
-const AI_CONFIG_FILE = path.join(DATA_DIR, 'ai-config.json')
-
-async function readAiConfig() {
-  try {
-    return JSON.parse(await fs.readFile(AI_CONFIG_FILE, 'utf-8'))
-  } catch {
-    return { baseUrl: '', model: '', apiKey: '' }
-  }
-}
-
-async function writeAiConfig(cfg) {
-  const tmp = `${AI_CONFIG_FILE}.tmp`
-  await fs.writeFile(tmp, JSON.stringify(cfg, null, 2), 'utf-8')
-  await renameWithRetry(tmp, AI_CONFIG_FILE)
-}
-
-// 对外只暴露 hasKey,密钥本身永不下发到浏览器
+// 对外只暴露 hasKey,密钥本身永不下发
 const publicAiConfig = (cfg) => ({
   baseUrl: cfg.baseUrl || '',
   model: cfg.model || '',
   hasKey: Boolean(cfg.apiKey),
 })
 
-app.get('/api/ai/config', h(async (_req, res) => {
-  res.json(publicAiConfig(await readAiConfig()))
+app.get('/api/ai/config', requireUser, h(async (req, res) => {
+  res.json(publicAiConfig(readAiConfig(req.user.id)))
 }))
 
-app.put('/api/ai/config', h(async (req, res) => {
+app.put('/api/ai/config', requireUser, h(async (req, res) => {
   const body = req.body || {}
-  const prev = await readAiConfig()
+  const prev = readAiConfig(req.user.id)
   const next = {
     baseUrl: String(body.baseUrl || '').trim().replace(/\/+$/, ''),
     model: String(body.model || '').trim(),
@@ -192,11 +204,11 @@ app.put('/api/ai/config', h(async (req, res) => {
         ? ''
         : String(body.apiKey || '').trim() || prev.apiKey || '',
   }
-  await writeAiConfig(next)
+  writeAiConfig(req.user.id, next)
   res.json(publicAiConfig(next))
 }))
 
-// 调用 OpenAI 兼容的 chat/completions:注入服务端密钥,60 秒超时;
+// 调用 OpenAI 兼容的 chat/completions:注入当前用户的密钥,60 秒超时;
 // 传入 clientSignal 时,客户端断开可提前中断,不空等超时
 async function callUpstream(cfg, payload, clientSignal) {
   const signals = [AbortSignal.timeout(60_000)]
@@ -226,10 +238,10 @@ async function upstreamError(res, upstream) {
 
 // 聊天代理:前端传 messages(含 system 快照)与 tools,返回模型的一条 message
 // (文本或 tool_calls);工具执行与多轮编排都在前端完成。
-app.post('/api/ai/chat', h(async (req, res) => {
-  const cfg = await readAiConfig()
+app.post('/api/ai/chat', requireUser, h(async (req, res) => {
+  const cfg = readAiConfig(req.user.id)
   if (!cfg.baseUrl || !cfg.model || !cfg.apiKey) {
-    res.status(400).json({ error: 'AI_NOT_CONFIGURED', message: '尚未配置 AI 服务,请先在 AI 助手页填写接口配置' })
+    res.status(400).json({ error: 'AI_NOT_CONFIGURED', message: '尚未配置 AI 服务,请先在 Miku 页填写接口配置' })
     return
   }
   const body = req.body || {}
@@ -258,8 +270,8 @@ app.post('/api/ai/chat', h(async (req, res) => {
 }))
 
 // 连通性测试:发一条极小请求验证配置是否可用
-app.post('/api/ai/test', h(async (_req, res) => {
-  const cfg = await readAiConfig()
+app.post('/api/ai/test', requireUser, h(async (req, res) => {
+  const cfg = readAiConfig(req.user.id)
   if (!cfg.baseUrl || !cfg.model || !cfg.apiKey) {
     res.json({ ok: false, message: '请先填写接口地址、模型名和 API Key' })
     return
@@ -295,7 +307,12 @@ app.use((req, res, next) => {
 })
 
 // 请求级错误兜底:记录并返回 500,不让进程退出
+// (重名注册是预期业务错误,静默转 400,不刷堆栈)
 app.use((err, _req, res, _next) => {
+  if (err?.code === 'USERNAME_TAKEN') {
+    if (!res.headersSent) res.status(400).json({ error: 'USERNAME_TAKEN', message: err.message })
+    return
+  }
   console.error('[server] request error:', err)
   if (!res.headersSent) res.status(500).json({ error: 'server error' })
 })
@@ -309,6 +326,8 @@ process.on('uncaughtException', (err) => {
 })
 
 // 端口被占(如已有 dev server 在跑)必须立刻失败退出,不能带病空转
+cleanExpiredSessions()
+backupDatabase()
 app.listen(PORT, HOST, () => {
   console.log(`[server] API ready on http://localhost:${PORT}`)
 }).on('error', (err) => {
