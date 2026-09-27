@@ -326,6 +326,10 @@ export default function App() {
   const [fabChatPos, setFabChatPos] = useState<{ left: number; bottom: number } | null>(null)
   // 待弹出的聊天窗定时器:双击第二下会取消它
   const fabPopTimer = useRef<number | null>(null)
+  // 长按(≈500ms)打开桌宠菜单:移动端的「右键」等价物,与单击/双击/拖动互斥
+  const fabHoldTimer = useRef<number | null>(null)
+  // 长按已触发:吞掉随后松手产生的 click,防止聊天弹窗叠在菜单上
+  const fabHeld = useRef(false)
   // 问候语显示名:跟登录账号绑定,存服务端按账号设置(留空 = 显示用户名)
   const [displayName, setDisplayName] = useState('')
   const [nameDraft, setNameDraft] = useState('')
@@ -394,7 +398,12 @@ export default function App() {
 
   const onFabPointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
     if (e.button !== 0) return
-    e.currentTarget.setPointerCapture(e.pointerId)
+    // 捕获失败(合成事件/指针已释放)不应中断手势初始化
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId)
+    } catch {
+      /* 忽略 */
+    }
     const rect = e.currentTarget.getBoundingClientRect()
     fabDrag.current = {
       startX: e.clientX,
@@ -403,6 +412,23 @@ export default function App() {
       startBottom: window.innerHeight - rect.bottom,
     }
     fabMoved.current = false
+    fabHeld.current = false
+    // 长按 ≈500ms 在指尖弹出桌宠菜单(移动端的「右键」);快速点按/拖动会提前清掉它
+    if (fabHoldTimer.current !== null) window.clearTimeout(fabHoldTimer.current)
+    const hx = e.clientX
+    const hy = e.clientY
+    fabHoldTimer.current = window.setTimeout(() => {
+      fabHoldTimer.current = null
+      fabHeld.current = true
+      navigator.vibrate?.(15)
+      // 与拖动同款:收起快捷聊天与待弹定时器,别让弹窗叠在菜单上
+      if (fabPopTimer.current !== null) {
+        window.clearTimeout(fabPopTimer.current)
+        fabPopTimer.current = null
+      }
+      setFabChatOpen(false)
+      setMikuMenu({ x: hx, y: hy })
+    }, 500)
   }
 
   const onFabPointerMove = (e: React.PointerEvent<HTMLButtonElement>) => {
@@ -412,6 +438,12 @@ export default function App() {
     const dy = e.clientY - d.startY
     if (!fabMoved.current && Math.hypot(dx, dy) < 5) return
     if (!fabMoved.current) {
+      if (fabHeld.current) return // 长按已弹出菜单:手指残留的移动不再激活拖动
+      // 拖动激活:作废还没触发的长按
+      if (fabHoldTimer.current !== null) {
+        window.clearTimeout(fabHoldTimer.current)
+        fabHoldTimer.current = null
+      }
       fabMoved.current = true
       setFabDragging(true)
       // 拖起 Miku 的瞬间收起快捷聊天(弹窗锚定在旧位置,不跟着球走)与待弹出的定时器
@@ -436,6 +468,11 @@ export default function App() {
   }
 
   const endFabDrag = () => {
+    // 松手/取消时长按还没触发就清掉(快速点按与双击的第二下都走这里)
+    if (fabHoldTimer.current !== null) {
+      window.clearTimeout(fabHoldTimer.current)
+      fabHoldTimer.current = null
+    }
     const d = fabDrag.current
     fabDrag.current = null
     setFabDragging(false)
@@ -1272,6 +1309,10 @@ export default function App() {
               setMikuMenu({ x: e.clientX, y: e.clientY })
             }}
             onClick={() => {
+              if (fabHeld.current) {
+                fabHeld.current = false // 长按刚弹出菜单:吞掉松手产生的 click
+                return
+              }
               if (fabMoved.current) {
                 fabMoved.current = false
                 return

@@ -2829,6 +2829,7 @@ kbd {
   z-index: 40;
   touch-action: none;
   user-select: none;
+  -webkit-touch-callout: none; /* iOS 长按不弹系统菜单(长按 = 桌宠菜单) */
   transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
 }
 
