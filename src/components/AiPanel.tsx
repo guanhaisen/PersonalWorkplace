@@ -663,7 +663,7 @@ function AiSettings({ onClose, onSaved }: { onClose: () => void; onSaved: (c: Ai
 
         {testResult && <div className={`ai-test ${testResult.ok ? 'ok' : 'bad'}`}>{testResult.message}</div>}
 
-        <p className="ai-privacy">Key 只保存在本机 data/ai-config.json;对话时你的数据摘要会发送给你配置的服务商。</p>
+        <p className="ai-privacy">Key 只保存在本机服务端数据库(按账号隔离);对话时你的数据摘要会发送给你配置的服务商。</p>
 
         <div className="ai-modal-foot">
           <button className="btn ghost" onClick={test} disabled={testing || saving}>

@@ -551,6 +551,11 @@ textarea::placeholder {
   color: var(--muted);
 }
 
+/* 命令面板的移动端入口:桌面由头部工具行的 ⌘K 承担,日期行徽标只在手机显示 */
+.hello-k {
+  display: none;
+}
+
 /* 问候语改名 */
 
 .name-edit-btn {
@@ -1233,6 +1238,29 @@ textarea::placeholder {
 .sch-week-hint {
   font-size: 11px;
   color: var(--text-3);
+}
+
+/* 设为本周:与周次选择器同高的次要按钮 */
+.sch-pin-week {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  transition: border-color 0.18s ease, color 0.18s ease;
+}
+
+.sch-pin-week:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.sch-pin-week:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 /* 备注行:跨全部星期列 */
@@ -3410,15 +3438,19 @@ kbd {
     justify-content: flex-start;
   }
 
+  /* 头部工具行(设为开始页/重置布局/⌘K/GitHub)整行收进命令面板,手机只留日期行 ⌘K 徽标 */
   .top-right {
-    display: flex;
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 6px;
+    display: none;
   }
 
-  .top-right .cm {
-    display: none;
+  .hello-date {
+    display: flex;
+    align-items: center;
+  }
+
+  .hello-k {
+    display: inline-flex;
+    margin-left: auto;
   }
 
   /* 顶栏只留品牌与导出/导入,导航移至底部图标栏 */
@@ -3541,18 +3573,37 @@ kbd {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  /* 课表:收窄节次列,压缩课程卡片字号 */
+  /* 课表:保持真实列宽(~83px,课名/地点完整可读),横向滑动查看;
+     圆角裁剪移到滚动容器——表格自身 overflow:hidden 会让 sticky 列失效 */
   .sch-table {
     grid-template-columns: 56px repeat(7, minmax(0, 1fr));
+    min-width: 645px;
+    overflow: visible;
+    border: none;
+    border-radius: 0;
+  }
+
+  .sch-scroll {
+    border: 1px solid var(--line-soft);
+    border-radius: 8px;
+  }
+
+  /* 左侧节次列在横向滑动时钉住 */
+  .sch-corner,
+  .sch-rowhead {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    box-shadow: 6px 0 8px -6px rgba(29, 38, 34, 0.18);
   }
 
   .sch-corner {
-    font-size: 9px;
+    font-size: 11px;
   }
 
   .sch-th {
-    padding: 6px 2px;
-    font-size: 10.5px;
+    padding: 8px 4px;
+    font-size: 12px;
   }
 
   .sch-rowhead b {
@@ -3574,11 +3625,28 @@ kbd {
   }
 
   .crs-name {
-    font-size: 10px;
+    font-size: 11px;
   }
 
   .crs-meta {
-    font-size: 9px;
+    font-size: 10px;
+  }
+
+  /* 课表工具行:窄屏允许换行,标签文字本身不断行 */
+  .sch-toolbar {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+
+  .sch-week-pick,
+  .sch-term-start,
+  .sch-week-hint {
+    white-space: nowrap;
+  }
+
+  /* 登录卡:小屏收窄内边距 */
+  .auth-card {
+    padding: 22px 18px 18px;
   }
 
   /* 弹窗贴边留缝 */
@@ -3863,6 +3931,8 @@ kbd {
 
 .auth-wrap {
   min-height: 100vh;
+  /* iOS Safari 地址栏伸缩时 100vh 会超出可视区,dvh 跟随实际视口 */
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;

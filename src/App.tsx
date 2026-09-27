@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type CSSProperties } from 'react'
 import type { AppData } from './types'
-import { ApiError, loadAll, logout, me, saveCollection, nowLocalStr, type CollectionKey } from './api'
+import { ApiError, getSettings, loadAll, logout, me, saveCollection, saveSettings, nowLocalStr, type CollectionKey } from './api'
 import LoginView from './components/LoginView'
 import TodoPanel from './components/TodoPanel'
 import CalendarPanel from './components/CalendarPanel'
@@ -326,8 +326,8 @@ export default function App() {
   const [fabChatPos, setFabChatPos] = useState<{ left: number; bottom: number } | null>(null)
   // 待弹出的聊天窗定时器:双击第二下会取消它
   const fabPopTimer = useRef<number | null>(null)
-  // 问候语名字:个人偏好,存 localStorage
-  const [name, setName] = useState(() => localStorage.getItem('profile.name') || '')
+  // 问候语显示名:跟登录账号绑定,存服务端按账号设置(留空 = 显示用户名)
+  const [displayName, setDisplayName] = useState('')
   const [nameDraft, setNameDraft] = useState('')
   const [editingName, setEditingName] = useState(false)
   const nameInputRef = useRef<HTMLInputElement>(null)
@@ -360,7 +360,7 @@ export default function App() {
   }
 
   const startEditName = () => {
-    setNameDraft(name)
+    setNameDraft(displayName)
     setEditingName(true)
     requestAnimationFrame(() => {
       nameInputRef.current?.focus()
@@ -370,9 +370,10 @@ export default function App() {
 
   const saveName = () => {
     const v = nameDraft.trim()
-    setName(v)
-    localStorage.setItem('profile.name', v)
+    setDisplayName(v)
     setEditingName(false)
+    // 显示名按账号存服务端,跨设备一致;失败时本次会话仍显示新值,下次登录以服务端为准
+    saveSettings({ displayName: v }).catch(() => {})
   }
 
   const toggleFabChat = () => {
@@ -413,6 +414,12 @@ export default function App() {
     if (!fabMoved.current) {
       fabMoved.current = true
       setFabDragging(true)
+      // 拖起 Miku 的瞬间收起快捷聊天(弹窗锚定在旧位置,不跟着球走)与待弹出的定时器
+      if (fabPopTimer.current !== null) {
+        window.clearTimeout(fabPopTimer.current)
+        fabPopTimer.current = null
+      }
+      setFabChatOpen(false)
       window.dispatchEvent(new CustomEvent(MIKU_DRAG_START_EVENT))
     }
     const next = clampFab(
@@ -613,6 +620,20 @@ export default function App() {
     if (authUser) load()
   }, [authUser, load])
 
+  // 显示名跟账号走:登录后从服务端取(空 = 回退用户名),换设备也一致
+  useEffect(() => {
+    if (!authUser) return
+    let cancelled = false
+    getSettings()
+      .then((s) => {
+        if (!cancelled) setDisplayName(typeof s?.displayName === 'string' ? s.displayName : '')
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [authUser])
+
   const handleAuthed = useCallback((username: string) => {
     // 登录/注册成功:数据加载由 authUser 变化触发的 effect 接手
     setAuthUser(username)
@@ -633,6 +654,7 @@ export default function App() {
     setPaletteOpen(false)
     setFabChatOpen(false)
     setView('overview')
+    setDisplayName('')
     setAuthUser(null)
   }, [])
 
@@ -768,6 +790,10 @@ export default function App() {
     { id: 'new-todo', label: '新建待办', hint: 'T', run: () => { setView('todos'); emit('workbench:focus-todo-input') } },
     { id: 'ask-ai', label: '询问 Miku', run: () => { setView('ai'); setTimeout(() => emit('workbench:ai-focus'), 0) } },
     { id: 'export', label: '导出全部数据', run: handleExport },
+    // 头部低频工具在手机上收进面板(桌面头部按钮保留,面板里也有一份)
+    { id: 'start-page', label: '设为开始页', run: () => setStartPageOpen(true) },
+    { id: 'reset-layout', label: '重置布局', run: resetLayout },
+    { id: 'github', label: 'GitHub 仓库', run: () => window.open(GITHUB_REPO, '_blank', 'noopener') },
     ...(mikuHidden ? [{ id: 'show-miku', label: '显示 Miku 悬浮球', run: showMiku }] : []),
   ]
 
@@ -1035,7 +1061,7 @@ export default function App() {
                   ref={nameInputRef}
                   className="name-edit"
                   value={nameDraft}
-                  placeholder="名字(留空则不显示)"
+                  placeholder="显示名(留空显示用户名)"
                   maxLength={20}
                   onChange={(e) => setNameDraft(e.target.value)}
                   onKeyDown={(e) => {
@@ -1046,15 +1072,24 @@ export default function App() {
                 />
               ) : (
                 <>
-                  {greeting}
-                  {name && `,${name}`}
-                  <button className="name-edit-btn" title="设置名字" onClick={startEditName}>
+                  {greeting},{displayName || authUser}
+                  <button
+                    className="name-edit-btn"
+                    title="设置显示名(留空显示用户名)"
+                    onClick={startEditName}
+                  >
                     ✎
                   </button>
                 </>
               )}
             </h1>
-            <p>{dateText}</p>
+            <p className="hello-date">
+              {dateText}
+              {/* 移动端命令面板入口:头部工具行收进面板后,这里是手机上唯一的 ⌘K 入口 */}
+              <button className="kbd-hint hello-k" title="命令面板" onClick={() => setPaletteOpen(true)}>
+                ⌘K
+              </button>
+            </p>
           </div>
 
           <LinksBar links={data.links} update={update} />

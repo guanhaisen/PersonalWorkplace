@@ -1,5 +1,5 @@
 // Miku(原 AI 助手):配置接口封装、OpenAI 兼容请求、工具 Schema 与数据快照构建。
-// 密钥只存在服务端(data/ai-config.json),前端只传消息与工具定义。
+// 密钥只存在服务端数据库(按账号隔离),前端只传消息与工具定义。
 import type { AppData } from './types'
 import { streak, todayStr } from './api'
 

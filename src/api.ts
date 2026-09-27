@@ -70,6 +70,21 @@ export async function logout(): Promise<void> {
   await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {})
 }
 
+/** 按账号的通用设置(学期开始、显示名等) */
+export async function getSettings(): Promise<Record<string, unknown>> {
+  const res = await fetch('/api/settings')
+  if (!res.ok) return {}
+  return res.json()
+}
+
+export async function saveSettings(patch: Record<string, unknown>): Promise<void> {
+  await fetch('/api/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+}
+
 export function loadAll(): Promise<AppData> {
   return req('/api/data')
 }

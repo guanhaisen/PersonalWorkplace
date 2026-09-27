@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import type { Course } from '../types'
-import { uid } from '../api'
+import { todayStr, uid } from '../api'
 import type { UpdateFn } from '../App'
 import { parseCoursesText, parseTimetableFile, PERIOD_TIMES, type ParsedCourse } from '../timetableImport'
 
@@ -106,6 +106,14 @@ export default function SchedulePanel({ courses, update }: Props) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ termStart: v }),
     }).catch(() => {})
+  }
+
+  // 把正在查看的周设为本周:反推锚点日期(本周一 − (week−1) 周)作为学期开始,
+  // 之后的周次随日期自然推进;复用 changeTermStart 的保存与服务端同步
+  const pinCurrentWeek = () => {
+    const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7) - (week - 1) * 7)
+    changeTermStart(todayStr(monday))
   }
 
   // 挂载时从服务端取学期开始日期与备注(localStorage 只在本浏览器有效,服务端为跨设备准绳)
@@ -408,6 +416,15 @@ export default function SchedulePanel({ courses, update }: Props) {
             ))}
           </select>
         </label>
+        <button
+          type="button"
+          className="sch-pin-week"
+          onClick={pinCurrentWeek}
+          disabled={week === currentWeek}
+          title="把正在查看的周设为本周(自动推算学期开始日期)"
+        >
+          设为本周
+        </button>
         <label className="sch-term-start" title="第一周的周一日期;设置后自动定位到当前周">
           学期开始
           <input type="date" value={termStart} onChange={(e) => changeTermStart(e.target.value)} />
