@@ -25,6 +25,8 @@ interface Props {
   autoFocus?: boolean
   /** bubble:悬浮球轻量模式——不显示历史,只显示输入框和最新一条回复的气泡 */
   variant?: 'panel' | 'bubble'
+  /** bubble 模式气泡限高(px):手机键盘顶起后可见高度有限,不设则走 CSS 的 45vh */
+  bubbleMaxHeight?: number
 }
 
 // 预置服务商:点击即把地址与推荐模型填入表单
@@ -37,7 +39,15 @@ const PRESETS: { label: string; baseUrl: string; model: string }[] = [
 const VIEWS: ViewKey[] = ['overview', 'todos', 'schedule', 'habits', 'ai', 'report']
 const nowIso = () => new Date().toISOString()
 
-export default function AiPanel({ data, update, onNavigate, onClose, autoFocus, variant = 'panel' }: Props) {
+export default function AiPanel({
+  data,
+  update,
+  onNavigate,
+  onClose,
+  autoFocus,
+  variant = 'panel',
+  bubbleMaxHeight,
+}: Props) {
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [toolNote, setToolNote] = useState('')
@@ -332,7 +342,10 @@ export default function AiPanel({ data, update, onNavigate, onClose, autoFocus, 
     return (
       <div className="miku-quick" onMouseDown={(e) => e.stopPropagation()}>
         {(busy || error || quickReplied) && (
-          <div className={`miku-bubble${error ? ' err' : ''}`}>
+          <div
+            className={`miku-bubble${error ? ' err' : ''}`}
+            style={bubbleMaxHeight !== undefined ? { maxHeight: bubbleMaxHeight } : undefined}
+          >
             {busy ? toolNote || '思考中…' : error || lastAssistant?.content}
           </div>
         )}

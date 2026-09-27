@@ -324,6 +324,16 @@ export default function App() {
   // 悬浮球点击弹出快速提问(轻量输入条 + 回复气泡);底部锚在 Miku 头顶上方,气泡变多向上生长
   const [fabChatOpen, setFabChatOpen] = useState(false)
   const [fabChatPos, setFabChatPos] = useState<{ left: number; bottom: number } | null>(null)
+  // 手机键盘顶起:弹键盘只缩短「视觉视口」,布局视口不动,锚在布局视口底的 fixed
+  // 悬浮球与弹窗会被键盘整段盖到屏幕外。量出遮挡量后把两者整体上移(纯视觉,
+  // 不写回记住的位置),键盘收起回原位。visH/fabH 供气泡限高用
+  const [kb, setKb] = useState<{ lift: number; visH: number; fabH: number } | null>(null)
+  // 顶起量/弹窗锚定需要「未上移」的悬浮球坐标;DOM rect 含已生效的上移且渲染可能滞后,
+  // 从 fabPos state 推导(innerHeight − bottom)与 DOM 时机无关
+  const fabPosRef = useRef(fabPos)
+  useEffect(() => {
+    fabPosRef.current = fabPos
+  }, [fabPos])
   // 待弹出的聊天窗定时器:双击第二下会取消它
   const fabPopTimer = useRef<number | null>(null)
   // 长按(≈500ms)打开桌宠菜单:移动端的「右键」等价物,与单击/双击/拖动互斥
@@ -380,19 +390,28 @@ export default function App() {
     saveSettings({ displayName: v }).catch(() => {})
   }
 
+  // 弹窗锚定计算:右对齐 Miku 右缘,底部锚在 Miku 头顶上方 12px;气泡变长时向上生长。
+  // fab 传「未上移」的右缘/头顶坐标——键盘顶起时 DOM rect 含上移量,由调用方先减掉
+  const anchorFabChat = (fab: { right: number; top: number } | null) => {
+    const vw = window.innerWidth
+    const W = Math.min(320, vw - 24)
+    const gap = 12
+    const left = Math.min(Math.max((fab ? fab.right : vw - 30) - W, 8), Math.max(vw - W - 8, 8))
+    const bottom = fab ? Math.round(window.innerHeight - fab.top + gap) : 96
+    return { left: Math.round(left), bottom }
+  }
+
   const toggleFabChat = () => {
     if (fabChatOpen) {
       setFabChatOpen(false)
       return
     }
-    // 右对齐 Miku 右缘,底部锚在 Miku 头顶上方 12px;气泡变长时向上生长
-    const vw = window.innerWidth
-    const W = Math.min(320, vw - 24)
-    const gap = 12
     const r = fabRef.current?.getBoundingClientRect()
-    const left = Math.min(Math.max((r ? r.right : vw - 30) - W, 8), Math.max(vw - W - 8, 8))
-    const bottom = r ? Math.round(window.innerHeight - r.top + gap) : 96
-    setFabChatPos({ left: Math.round(left), bottom })
+    // 头顶坐标从 fabPos 推导(键盘顶起时 DOM rect 含上移量且渲染可能滞后)
+    const fab = r
+      ? { right: r.right, top: window.innerHeight - (fabPosRef.current?.bottom ?? 30) - r.height }
+      : null
+    setFabChatPos(anchorFabChat(fab))
     setFabChatOpen(true)
   }
 
@@ -517,12 +536,92 @@ export default function App() {
     }
   }, [view])
 
-  // 窗口缩小后把悬浮球拉回视口内(仅视觉钳制,不覆盖记住的位置,放大窗口后原位仍在)
+  // 窗口缩小后把悬浮球拉回视口内。以 localStorage 存档为基准钳制:键盘开合在
+  // resizes-content 浏览器(微信内置等)上会触发 resize,若以当前 state 为基准,
+  // 缩下去的钳制值会覆盖原位,键盘收起后回不去
   useEffect(() => {
-    const onResize = () => setFabPos((p) => (p ? clampFab(p) : p))
+    const onResize = () => {
+      const el = fabRef.current
+      const size = { w: el?.offsetWidth ?? FAB_SIZE, h: el?.offsetHeight ?? FAB_SIZE }
+      let saved: { right: number; bottom: number } | null = null
+      try {
+        const raw = localStorage.getItem(FAB_POS_KEY)
+        const p = raw ? JSON.parse(raw) : null
+        if (p && typeof p?.right === 'number' && typeof p?.bottom === 'number') saved = p
+      } catch {
+        // 忽略损坏存档
+      }
+      const next = saved ? clampFab(saved, size) : null
+      setFabPos((p) => (saved ? next : p))
+      // 快捷弹窗锚在悬浮球头顶:视口变了就按新位置重锚一次,否则弹窗的 bottom
+      // 还是按旧高度算的,innerHeight 一变就飘走
+      if (fabChatOpen && el) {
+        const r = el.getBoundingClientRect()
+        setFabChatPos(
+          next
+            ? anchorFabChat({
+                right: window.innerWidth - next.right,
+                top: window.innerHeight - next.bottom - size.h,
+              })
+            : anchorFabChat({
+                right: r.right,
+                top: window.innerHeight - (fabPosRef.current?.bottom ?? 30) - size.h,
+              }),
+        )
+      }
+    }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
-    // clampFab 每次渲染重建,但行为只依赖常量与当时的窗口尺寸,无需进依赖
+    // clampFab/anchorFabChat 每次渲染重建,但行为只依赖常量与当时的窗口尺寸,无需进依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fabChatOpen])
+
+  // 手机弹键盘:visualViewport 被压短而布局视口(innerHeight)不动,量出悬浮球底边
+  // 超出「可见下缘」多少,作为整体上移量。resize+scroll 都听(iOS 弹键盘是先缩后平移),
+  // rAF 合帧避免缩与平移两个事件各算一步造成来回跳
+  useEffect(() => {
+    const vv = window.visualViewport
+    if (!vv) return
+    let raf = 0
+    const update = () => {
+      const fab = fabRef.current
+      if (!fab) {
+        setKb(null)
+        return
+      }
+      // 键盘是否开着:视觉视口比布局视口矮一大截(地址栏伸缩/回弹只有几十 px,不误判)
+      if (window.innerHeight - vv.height <= 80) {
+        setKb(null)
+        return
+      }
+      const rect = fab.getBoundingClientRect()
+      const visBottom = vv.offsetTop + vv.height // 可见区域在布局坐标里的下缘
+      // 未顶起的底边 = 布局视口高 − 记录的 bottom(30 = .ai-fab 的 CSS 默认 bottom,
+      // 与渲染层取值一致);不读 DOM 位置,渲染滞后也不会把顶起量算重
+      const baseBottom = fabPosRef.current?.bottom ?? 30
+      const unliftedBottom = window.innerHeight - baseBottom
+      const lift = Math.max(0, Math.ceil(unliftedBottom + FAB_MARGIN - visBottom))
+      const next = { lift, visH: Math.round(vv.height), fabH: Math.round(rect.height) }
+      setKb((prev) =>
+        prev && prev.lift === lift && prev.visH === next.visH && prev.fabH === next.fabH ? prev : next,
+      )
+    }
+    const schedule = () => {
+      if (!raf) {
+        raf = requestAnimationFrame(() => {
+          raf = 0
+          update()
+        })
+      }
+    }
+    schedule()
+    vv.addEventListener('resize', schedule)
+    vv.addEventListener('scroll', schedule)
+    return () => {
+      if (raf) cancelAnimationFrame(raf)
+      vv.removeEventListener('resize', schedule)
+      vv.removeEventListener('scroll', schedule)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -1298,7 +1397,15 @@ export default function App() {
             className={`ai-fab ${fabDragging ? 'dragging' : ''} ${mikuReady && !mikuFailed ? 'miku-fab' : ''} ${
               mikuQQ ? 'miku-qq' : ''
             }`}
-            style={{ ...(fabPos ?? {}), '--miku-scale': mikuScale } as CSSProperties}
+            style={
+              {
+                right: fabPos?.right,
+                // 未拖动过时 fabPos 为空,30 与 .ai-fab 的 CSS 默认 bottom 一致;
+                // 键盘顶起时整体上移 kb.lift,不改 fabPos 本身
+                bottom: (fabPos?.bottom ?? 30) + (kb?.lift ?? 0),
+                '--miku-scale': mikuScale,
+              } as CSSProperties
+            }
             title="Miku · 右键更多 · 拖动可换位置"
             onPointerDown={onFabPointerDown}
             onPointerMove={onFabPointerMove}
@@ -1348,7 +1455,14 @@ export default function App() {
         )}
 
         {fabChatOpen && (
-          <div className="ai-pop" style={fabChatPos ?? undefined}>
+          <div
+            className="ai-pop"
+            style={
+              fabChatPos
+                ? { left: fabChatPos.left, bottom: fabChatPos.bottom + (kb?.lift ?? 0) }
+                : undefined
+            }
+          >
             <AiPanel
               data={data}
               update={update}
@@ -1356,6 +1470,9 @@ export default function App() {
               onClose={() => setFabChatOpen(false)}
               autoFocus
               variant="bubble"
+              // 键盘顶起时可见高度有限:气泡限高到「可见高度 − Miku − 输入条等余量」,
+              // 保证输入条和 Miku 本体都露在键盘上方;键盘收起回到 CSS 的 45vh
+              bubbleMaxHeight={kb ? Math.max(0, kb.visH - kb.fabH - 76) : undefined}
             />
           </div>
         )}
