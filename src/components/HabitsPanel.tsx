@@ -4,6 +4,7 @@ import { streak, todayStr, uid } from '../api'
 import type { UpdateFn } from '../App'
 import { IconCheck } from './icons'
 import HabitDetailCard from './HabitDetailCard'
+import { celebrateMiku } from './MikuStage'
 
 interface Props {
   habits: Habit[]
@@ -65,7 +66,10 @@ export default function HabitsPanel({ habits, update }: Props) {
     setName('')
   }
 
-  const toggle = (habitId: string, day: string) =>
+  const toggle = (habitId: string, day: string) => {
+    // 打卡今天时让 Miku 庆祝一下(取消/补历史日期不庆祝)
+    const habit = habits.find((x) => x.id === habitId)
+    if (habit && day === today && !habit.records[day]) celebrateMiku()
     update('habits', (items) =>
       items.map((h) => {
         if (h.id !== habitId) return h
@@ -75,6 +79,7 @@ export default function HabitsPanel({ habits, update }: Props) {
         return { ...h, records }
       }),
     )
+  }
 
   const remove = (id: string) => update('habits', (items) => items.filter((h) => h.id !== id))
 

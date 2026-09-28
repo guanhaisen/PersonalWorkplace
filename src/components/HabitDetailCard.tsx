@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Habit } from '../types'
 import type { UpdateFn } from '../App'
 import { streak, todayStr } from '../api'
+import { celebrateMiku } from './MikuStage'
 
 interface Props {
   habit: Habit
@@ -74,13 +75,16 @@ export default function HabitDetailCard({ habit, update, onClose }: Props) {
   const patch = (fn: (h: Habit) => Habit) =>
     update('habits', (items) => items.map((h) => (h.id === habit.id ? fn(h) : h)))
 
-  const setRecord = (day: string) =>
+  const setRecord = (day: string) => {
+    // 打卡今天时让 Miku 庆祝一下(取消/补历史日期不庆祝)
+    if (day === today && !habit.records[day]) celebrateMiku()
     patch((h) => {
       const records = { ...h.records }
       if (records[day]) delete records[day]
       else records[day] = true
       return { ...h, records }
     })
+  }
 
   const rename = () => {
     const n = draft.trim()

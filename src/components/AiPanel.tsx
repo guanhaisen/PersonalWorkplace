@@ -13,7 +13,7 @@ import {
   type ToolCall,
   type UpstreamMessage,
 } from '../ai'
-import { MIKU_EXPRESS_EVENT } from './MikuStage'
+import { MIKU_CELEBRATE_EVENT, MIKU_EXPRESS_EVENT, MIKU_SPEAK_EVENT, MIKU_THINKING_EVENT } from './MikuStage'
 
 interface Props {
   data: AppData
@@ -133,6 +133,8 @@ export default function AiPanel({
         applyToolUpdate('todos', (items) =>
           items.map((t) => (t.id === id && !t.done ? { ...t, done: true, completedAt: nowIso() } : t)),
         )
+        // Miku 自己帮忙做完也庆祝一下(未启用 Live2D 时无监听方,无副作用)
+        window.dispatchEvent(new CustomEvent(MIKU_CELEBRATE_EVENT))
         return { ok: true }
       }
       case 'delete_todo': {
@@ -186,6 +188,7 @@ export default function AiPanel({
         applyToolUpdate('habits', (items) =>
           items.map((h) => (h.id === id ? { ...h, records: { ...h.records, [today]: true } } : h)),
         )
+        window.dispatchEvent(new CustomEvent(MIKU_CELEBRATE_EVENT))
         return { ok: true }
       }
       case 'add_reminder': {
@@ -277,6 +280,8 @@ export default function AiPanel({
     setError('')
     update('chats', (items) => [...items, { id: uid(), role: 'user', content: text, ts: nowIso() }])
     setBusy(true)
+    // Miku 进入思考状态:慢速轻晃直到回复回来(未启用 Live2D 时无监听方,无副作用)
+    window.dispatchEvent(new CustomEvent(MIKU_THINKING_EVENT, { detail: { on: true } }))
     const abort = new AbortController()
     abortRef.current = abort
     try {
@@ -285,8 +290,11 @@ export default function AiPanel({
         ...items,
         { id: uid(), role: 'assistant', content: reply, ts: nowIso(), usage: usage ?? undefined },
       ])
-      // 让 Miku 悬浮球做个表情(未启用 Live2D 时无监听方,无副作用)
+      // 让 Miku 悬浮球做个表情,并按回复长度开口念一会儿(未启用 Live2D 时无监听方,无副作用)
       window.dispatchEvent(new CustomEvent(MIKU_EXPRESS_EVENT))
+      window.dispatchEvent(
+        new CustomEvent(MIKU_SPEAK_EVENT, { detail: { ms: Math.min(Math.max(reply.length * 60, 1500), 4500) } }),
+      )
       // 气泡模式:回复已到,弹出气泡
       setQuickReplied(true)
     } catch (err) {
@@ -295,6 +303,7 @@ export default function AiPanel({
       abortRef.current = null
       setBusy(false)
       setToolNote('')
+      window.dispatchEvent(new CustomEvent(MIKU_THINKING_EVENT, { detail: { on: false } }))
     }
   }
 

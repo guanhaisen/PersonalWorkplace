@@ -2897,35 +2897,6 @@ kbd {
   display: block;
 }
 
-/* 互动粒子层:盖在画布上方,事件穿透;粒子从胸口附近向上飘散淡出 */
-.miku-fx {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.miku-fx-bit {
-  position: absolute;
-  font-size: 13px;
-  line-height: 1;
-  opacity: 0;
-  animation: miku-float var(--dur, 1.4s) ease-out forwards;
-}
-
-@keyframes miku-float {
-  0% {
-    opacity: 0;
-    transform: translate(0, 0) scale(0.6);
-  }
-  18% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-    transform: translate(var(--dx, 0), -72px) scale(1.12);
-  }
-}
-
 @media (max-width: 640px) {
   /* 手机端整体等比缩小到 75%,画布本身不重建,用 transform 缩放;大小档位叠加 */
   .ai-fab.miku-fab {
@@ -3084,6 +3055,37 @@ kbd {
 .miku-bubble.err {
   color: #b3392e;
   border-color: #eccfcb;
+}
+
+/* 闲置碎碎念:Miku 闲置彩蛋冒出的小气泡,锚在头顶,右下尾巴指向她,几秒后自动消失 */
+.miku-murmur {
+  position: fixed;
+  width: min(240px, calc(100vw - 24px));
+  z-index: 45;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  border-bottom-right-radius: 4px;
+  box-shadow: 0 10px 32px rgba(16, 24, 40, 0.14);
+  padding: 9px 12px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  animation: ai-pop-in 0.18s ease;
+}
+
+/* 尾巴:右下角指向 Miku */
+.miku-murmur::after {
+  content: '';
+  position: absolute;
+  right: 14px;
+  bottom: -5px;
+  width: 9px;
+  height: 9px;
+  background: var(--card);
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  transform: rotate(45deg);
 }
 
 .miku-quick-bar {

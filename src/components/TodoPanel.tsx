@@ -3,6 +3,7 @@ import type { Todo } from '../types'
 import { todayStr, uid } from '../api'
 import type { UpdateFn } from '../App'
 import { IconCheck } from './icons'
+import { celebrateMiku } from './MikuStage'
 
 type Filter = 'active' | 'overdue' | 'done' | 'all'
 
@@ -82,7 +83,9 @@ export default function TodoPanel({ todos, update }: Props) {
     setDueDate('')
   }
 
-  const toggle = (id: string) =>
+  const toggle = (id: string) => {
+    // 勾选完成时让 Miku 庆祝一下(取消完成不庆祝)
+    if (todos.some((t) => t.id === id && !t.done)) celebrateMiku()
     update('todos', (items) =>
       items.map((t) =>
         t.id === id
@@ -90,6 +93,7 @@ export default function TodoPanel({ todos, update }: Props) {
           : t,
       ),
     )
+  }
 
   const remove = (id: string) => update('todos', (items) => items.filter((t) => t.id !== id))
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type CSSProperties } from 'react'
 import type { AppData } from './types'
-import { ApiError, getSettings, loadAll, logout, me, saveCollection, saveSettings, nowLocalStr, type CollectionKey } from './api'
+import { ApiError, getSettings, loadAll, logout, me, saveCollection, saveSettings, nowLocalStr, todayStr, streak, type CollectionKey } from './api'
 import LoginView from './components/LoginView'
 import TodoPanel from './components/TodoPanel'
 import CalendarPanel from './components/CalendarPanel'
@@ -12,7 +12,7 @@ import ReportPanel from './components/ReportPanel'
 import LinksBar from './components/LinksBar'
 import StartPageModal from './components/StartPageModal'
 import ReminderPopup from './components/ReminderPopup'
-import MikuStage, { MIKU_DRAG_END_EVENT, MIKU_DRAG_START_EVENT, MIKU_PLAY_EVENT, MIKU_QQ_EVENT, MIKU_TAP_EVENT } from './components/MikuStage'
+import MikuStage, { MIKU_DRAG_END_EVENT, MIKU_DRAG_START_EVENT, MIKU_MURMUR_EVENT, MIKU_PLAY_EVENT, MIKU_QQ_EVENT, MIKU_TAP_EVENT } from './components/MikuStage'
 import MikuMenu, { type MikuMenuItem } from './components/MikuMenu'
 import { BrandMark, IconAi, IconCalendar, IconGitHub, IconGrip, IconHabit, IconKeys, IconOverview, IconReport, IconSchedule, IconTodo } from './components/icons'
 import CommandPalette, { type Command } from './components/CommandPalette'
@@ -116,6 +116,54 @@ function loadNavOrder(): ViewKey[] {
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
 const WEEKDAYS_EN = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT']
 const GITHUB_REPO = 'https://github.com/guanhaisen/PersonalWorkplace'
+
+// ---------- 闲置碎碎念:Miku 闲置彩蛋偶尔冒一句基于当前数据的话 ----------
+
+const pad2 = (n: number) => String(n).padStart(2, '0')
+const localStamp = (d: Date) =>
+  `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+
+function makeMurmurLine(d: AppData | null): string {
+  const now = new Date()
+  const h = now.getHours()
+  const night = h >= 21 || h < 6
+  const todos = d?.todos ?? []
+  const pending = todos.filter((t) => !t.done)
+  const overdue = pending.filter((t) => !!t.dueDate && t.dueDate < todayStr())
+  const habits = d?.habits ?? []
+  const unchecked = habits.filter((hb) => !hb.records[todayStr()])
+  const hm = `${pad2(h)}:${pad2(now.getMinutes())}`
+  const classesLeft = (d?.courses ?? []).filter((c) => c.weekday % 7 === now.getDay() && c.end > hm)
+  const soonReminder = (d?.reminders ?? []).find(
+    (r) => !r.firedAt && r.dueAt >= nowLocalStr() && r.dueAt <= localStamp(new Date(Date.now() + 3_600_000)),
+  )
+
+  const pool: string[] = []
+  if (night) {
+    pool.push('夜深了,我也犯困了…你也早点休息哦', '这么晚还在忙吗?别熬太晚呀')
+    if (pending.length > 0) pool.push(`还有 ${pending.length} 件待办,做完早点睡哦`)
+  } else if (h < 11) {
+    pool.push('早上好呀,新的一天也要元气满满哦')
+    if (classesLeft.length > 0) pool.push(`今天还有 ${classesLeft.length} 节课,别迟到啦`)
+    if (unchecked[0]) pool.push(`新的一天,从打卡「${unchecked[0].name}」开始吧`)
+  } else if (h < 14) {
+    pool.push('午休一下下,下午更有精神哦', '午饭吃了吗?吃饱才有力气干活')
+  } else if (h < 18) {
+    pool.push('记得起来活动一下,眼睛也要休息哦', '喝口水,休息一下吧~')
+  } else {
+    pool.push('今天辛苦啦~', '晚饭吃了吗?别饿着肚子干活')
+  }
+  if (!night) {
+    if (overdue.length > 0) pool.push(`有 ${overdue.length} 件待办已经逾期了,先处理一下?`)
+    if (pending.length > 0 && h >= 14) pool.push(`还有 ${pending.length} 个待办没完成,加油鸭`)
+    if (unchecked[0]) pool.push(`今天的「${unchecked[0].name}」还没打卡哦`)
+    if (soonReminder) pool.push(`「${soonReminder.title}」一小时后就要提醒你咯`)
+    const proud = habits.find((hb) => !!hb.records[todayStr()] && streak(hb.records) >= 3)
+    if (proud) pool.push(`「${proud.name}」已经连续 ${streak(proud.records)} 天啦,好厉害!`)
+  }
+  if (pool.length === 0) pool.push('有什么想做的,随时告诉我哦~')
+  return pool[Math.floor(Math.random() * pool.length)]
+}
 
 export default function App() {
   // ---------- 登录会话:先确认身份,再拉当前账号的数据 ----------
@@ -350,14 +398,22 @@ export default function App() {
   // Miku Live2D 悬浮球:加载成功前按钮保持星星图标,失败后永久回退图标
   const [mikuReady, setMikuReady] = useState(false)
   const [mikuFailed, setMikuFailed] = useState(false)
-  // QQ 人形态:按钮盒与拖动钳制范围随之缩小
+  // QQ 人形态:按钮盒与拖动钳制范围随之缩小;仅本会话内保持,刷新回默认原形
   const [mikuQQ, setMikuQQ] = useState(false)
+  // 保留动作(右键菜单「动作」选的表情/舞蹈):本会话内一直保持、不自动复原;
+  // 刷新页面回默认待机(按需求不做跨刷新记忆)
+  const [mikuAction, setMikuAction] = useState<string | null>(null)
   // 右键菜单与 Miku 偏好(隐藏 / 缩放 / 眼神跟随 / 闲置彩蛋),均持久化
   const [mikuMenu, setMikuMenu] = useState<{ x: number; y: number } | null>(null)
   const [mikuHidden, setMikuHidden] = useState(() => localStorage.getItem('miku.hidden') === '1')
   const [mikuScale, setMikuScale] = useState(() => Number(localStorage.getItem('miku.scale')) || 1)
   const [mikuEye, setMikuEye] = useState(() => localStorage.getItem('miku.eye') !== '0')
   const [mikuIdle, setMikuIdle] = useState(() => localStorage.getItem('miku.idle') !== '0')
+  // 闲置碎碎念:Miku 闲置彩蛋偶尔冒一句基于当前数据的气泡(5 秒自动消失)
+  const [murmur, setMurmur] = useState<{ id: number; text: string } | null>(null)
+  const [murmurPos, setMurmurPos] = useState<{ left: number; bottom: number } | null>(null)
+  const murmurTimer = useRef<number | null>(null)
+  const lastMurmur = useRef('')
 
   const hideMiku = () => {
     setMikuHidden(true)
@@ -391,10 +447,11 @@ export default function App() {
   }
 
   // 弹窗锚定计算:右对齐 Miku 右缘,底部锚在 Miku 头顶上方 12px;气泡变长时向上生长。
-  // fab 传「未上移」的右缘/头顶坐标——键盘顶起时 DOM rect 含上移量,由调用方先减掉
-  const anchorFabChat = (fab: { right: number; top: number } | null) => {
+  // width 指定弹窗宽(快捷聊天 320 / 碎碎念 240);fab 传「未上移」的右缘/头顶坐标——
+  // 键盘顶起时 DOM rect 含上移量,由调用方先减掉
+  const anchorFabChat = (fab: { right: number; top: number } | null, width = 320) => {
     const vw = window.innerWidth
-    const W = Math.min(320, vw - 24)
+    const W = Math.min(width, vw - 24)
     const gap = 12
     const left = Math.min(Math.max((fab ? fab.right : vw - 30) - W, 8), Math.max(vw - W - 8, 8))
     const bottom = fab ? Math.round(window.innerHeight - fab.top + gap) : 96
@@ -525,6 +582,40 @@ export default function App() {
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [fabChatOpen])
+
+  // 闲置碎碎念:收到 MikuStage 彩蛋请求,按当前数据挑一句台词锚在 Miku 头顶冒 5 秒;
+  // 聊天窗/菜单开着时不出(位置会叠)
+  useEffect(() => {
+    const onMurmur = () => {
+      if (document.hidden || fabChatOpen || mikuMenu) return
+      let text = makeMurmurLine(dataRef.current)
+      for (let i = 0; i < 3 && text === lastMurmur.current; i++) text = makeMurmurLine(dataRef.current)
+      if (text === lastMurmur.current) return
+      lastMurmur.current = text
+      const r = fabRef.current?.getBoundingClientRect()
+      const fab = r
+        ? { right: r.right, top: window.innerHeight - (fabPosRef.current?.bottom ?? 30) - r.height }
+        : null
+      setMurmurPos(anchorFabChat(fab, 240))
+      setMurmur({ id: Date.now(), text })
+      if (murmurTimer.current !== null) window.clearTimeout(murmurTimer.current)
+      murmurTimer.current = window.setTimeout(() => setMurmur(null), 5000)
+    }
+    window.addEventListener(MIKU_MURMUR_EVENT, onMurmur)
+    return () => window.removeEventListener(MIKU_MURMUR_EVENT, onMurmur)
+    // 锚定/台词只依赖当时的 dataRef 与窗口几何快照,无需进依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fabChatOpen, mikuMenu])
+
+  // 聊天窗或菜单打开时立即收起碎碎念(别叠在一起)
+  useEffect(() => {
+    if (!fabChatOpen && !mikuMenu) return
+    if (murmurTimer.current !== null) {
+      window.clearTimeout(murmurTimer.current)
+      murmurTimer.current = null
+    }
+    setMurmur(null)
+  }, [fabChatOpen, mikuMenu])
 
   useEffect(() => {
     if (view === 'ai') {
@@ -990,8 +1081,18 @@ export default function App() {
     .filter((r) => !r.firedAt && r.dueAt >= nowLocalStr())
     .sort((a, b) => (a.dueAt < b.dueAt ? -1 : 1))
     .slice(0, 4)
-  const playMiku = (expression: string) =>
-    window.dispatchEvent(new CustomEvent(MIKU_PLAY_EVENT, { detail: { expression } }))
+  // 菜单「动作」统一入口:所选动作本会话内一直保持(刷新回默认待机),不写存档。
+  // talkMs 仅唱歌用:表情保留,口型只开合一会儿
+  const playMiku = (expression: string | null, talkMs?: number) => {
+    setMikuAction(expression)
+    window.dispatchEvent(
+      new CustomEvent(MIKU_PLAY_EVENT, {
+        detail: expression
+          ? { expression, pin: true, ...(talkMs ? { talkMs } : {}) }
+          : { clear: true },
+      }),
+    )
+  }
   const mikuMenuItems: MikuMenuItem[] = [
     { key: 'hide', label: '隐藏她', hint: '⌘K 恢复', onClick: hideMiku },
     { key: 'sep1', label: '', divider: true },
@@ -999,10 +1100,13 @@ export default function App() {
       key: 'act',
       label: '动作',
       children: [
-        { key: 'heart', label: '比心', onClick: () => playMiku('比心') },
-        { key: 'blush', label: '脸红', onClick: () => playMiku('脸红') },
-        { key: 'circle', label: '圈圈', onClick: () => playMiku('圈圈') },
-        { key: 'dance', label: '拿葱舞', onClick: () => window.dispatchEvent(new CustomEvent(MIKU_PLAY_EVENT, { detail: { dance: true } })) },
+        { key: 'none', label: '恢复默认', checked: !mikuAction, onClick: () => playMiku(null) },
+        { key: 'heart', label: '比心', checked: mikuAction === '比心', onClick: () => playMiku('比心') },
+        { key: 'blush', label: '脸红', checked: mikuAction === '脸红', onClick: () => playMiku('脸红') },
+        { key: 'circle', label: '圈圈', checked: mikuAction === '圈圈', onClick: () => playMiku('圈圈') },
+        { key: 'sing', label: '唱歌', checked: mikuAction === '唱歌', onClick: () => playMiku('唱歌', 3200) },
+        { key: 'lean', label: '前倾', checked: mikuAction === '前倾', onClick: () => playMiku('前倾') },
+        { key: 'dance', label: '拿葱舞', checked: mikuAction === '拿葱舞', onClick: () => playMiku('拿葱舞') },
         { key: 'qq', label: 'QQ 人形态', checked: mikuQQ, onClick: () => window.dispatchEvent(new CustomEvent(MIKU_QQ_EVENT)) },
       ],
     },
@@ -1415,7 +1519,7 @@ export default function App() {
               e.preventDefault()
               setMikuMenu({ x: e.clientX, y: e.clientY })
             }}
-            onClick={() => {
+            onClick={(e) => {
               if (fabHeld.current) {
                 fabHeld.current = false // 长按刚弹出菜单:吞掉松手产生的 click
                 return
@@ -1424,9 +1528,13 @@ export default function App() {
                 fabMoved.current = false
                 return
               }
-              // 无论哪个页面点她都有互动反馈;Miku 页本身是完整聊天界面,不再弹就地小窗
-              window.dispatchEvent(new CustomEvent(MIKU_TAP_EVENT))
+              // 无论哪个页面点她都有互动反馈(带纵坐标,按摸头/戳脸/挠痒痒分区反应);
+              // Miku 页本身是完整聊天界面,不再弹就地小窗
+              window.dispatchEvent(new CustomEvent(MIKU_TAP_EVENT, { detail: { clientY: e.clientY } }))
               if (view === 'ai') return
+              // 弹窗已开着:点她 = 纯摸摸,不再开合弹窗(连击彩蛋不被双击打断,
+              // 双击也不切 QQ 形态);收起走 Esc/点外部
+              if (fabChatOpen) return
               // 弹窗延迟弹出,双击的第二下会取消(双击 = 切换 QQ 形态)
               if (fabPopTimer.current !== null) {
                 window.clearTimeout(fabPopTimer.current)
@@ -1438,7 +1546,10 @@ export default function App() {
                 toggleFabChat()
               }, FAB_POP_DELAY)
             }}
-            onDoubleClick={() => window.dispatchEvent(new CustomEvent(MIKU_QQ_EVENT))}
+            onDoubleClick={() => {
+              // 弹窗开着时双击也是摸摸,不切 QQ 形态
+              if (!fabChatOpen) window.dispatchEvent(new CustomEvent(MIKU_QQ_EVENT))
+            }}
           >
             {!mikuFailed && (
               <MikuStage
@@ -1474,6 +1585,17 @@ export default function App() {
               // 保证输入条和 Miku 本体都露在键盘上方;键盘收起回到 CSS 的 45vh
               bubbleMaxHeight={kb ? Math.max(0, kb.visH - kb.fabH - 76) : undefined}
             />
+          </div>
+        )}
+
+        {/* 闲置碎碎念:Miku 闲置彩蛋冒出的气泡,锚在 Miku 头顶,5 秒自动消失 */}
+        {murmur && (
+          <div
+            key={murmur.id}
+            className="miku-murmur"
+            style={murmurPos ? { left: murmurPos.left, bottom: murmurPos.bottom } : undefined}
+          >
+            {murmur.text}
           </div>
         )}
 
