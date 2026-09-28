@@ -23,8 +23,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(__dirname, '..')
 const DIST_DIR = path.join(ROOT, 'dist')
 const PORT = process.env.PORT || 3001
-// 默认只监听本机,局域网设备不可达;确需开放时启动前设 HOST=0.0.0.0
-const HOST = process.env.HOST || '127.0.0.1'
+// 云端部署经反向代理访问,必须监听所有网卡;本地如需限制,启动前设 HOST=127.0.0.1
+const HOST = process.env.HOST || '0.0.0.0'
 
 const COOKIE_NAME = 'wb_session'
 const SESSION_TTL_S = 30 * 24 * 3600
