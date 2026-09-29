@@ -146,7 +146,11 @@ export const AI_TOOLS = [
   {
     type: 'function',
     function: fn('switch_view', '切换到某个页面展示给用户', {
-      view: { type: 'string', enum: ['overview', 'todos', 'schedule', 'habits', 'ai', 'report'], description: '目标页面' },
+      view: {
+        type: 'string',
+        enum: ['overview', 'todos', 'schedule', 'habits', 'ai', 'raise', 'report'],
+        description: '目标页面;raise 是 Miku 养成页(互动/喂食/聊天)',
+      },
     }, ['view']),
   },
 ]

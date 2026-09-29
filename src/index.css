@@ -4057,3 +4057,606 @@ kbd {
 .sidebar.collapsed .user-line {
   justify-content: center;
 }
+
+/* ---------- Miku 养成页 ---------- */
+
+/* 养成视图不渲染面板网格(独立在 board 之后),board 整体隐藏 */
+.board.v-raise {
+  display: none;
+}
+
+.raise-page {
+  flex: 1;
+  min-height: 0;
+  max-width: 1280px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.raise-page.hidden {
+  display: none;
+}
+
+.raise-body {
+  height: 100%;
+  display: flex;
+  gap: 18px;
+  align-items: stretch;
+  min-height: 0;
+}
+
+.raise-left {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  gap: 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 18px 16px;
+  position: relative;
+}
+
+/* 主区:头部 + 舞台 + 状态条 */
+.raise-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 互动侧栏:按钮纵排 + 成就徽章 */
+.raise-side {
+  width: 176px;
+  flex: none;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-left: 1px solid var(--line);
+  padding-left: 16px;
+}
+
+.raise-side-title {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+}
+
+.raise-side .raise-actions {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+}
+
+.raise-side .raise-act {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.raise-side .raise-badges {
+  justify-content: flex-start;
+  border-top: 1px dashed var(--line);
+  padding-top: 10px;
+}
+
+.raise-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.raise-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.raise-title i {
+  font-style: normal;
+  color: #b4bcb6;
+  font-weight: 400;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.raise-lv {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+/* 大舞台:底部对齐,气泡浮在她头顶;画布由 MikuStage 自行渲染 */
+.raise-stage-wrap {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  position: relative;
+  padding-top: 44px;
+}
+
+.raise-stage {
+  position: relative;
+  max-width: 100%;
+}
+
+.raise-bubble {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  width: max-content;
+  max-width: min(300px, 90%);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  border-bottom-left-radius: 4px;
+  box-shadow: 0 10px 32px rgba(16, 24, 40, 0.14);
+  padding: 9px 12px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  animation: ai-pop-in 0.18s ease;
+}
+
+/* 尾巴:左下角指向 Miku */
+.raise-bubble::after {
+  content: '';
+  position: absolute;
+  left: 26px;
+  bottom: -5px;
+  width: 9px;
+  height: 9px;
+  background: var(--card);
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  transform: rotate(45deg);
+}
+
+.raise-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+/* 页面舞台上的她可以随便摸:恢复指针交互(悬浮球版是 pointer-events:none 由按钮接管) */
+.miku-stage.page {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+/* 状态条 + 互动按钮 */
+.raise-stats {
+  width: 100%;
+  max-width: 520px;
+  margin: 10px auto 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.raise-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.raise-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.raise-bar-label {
+  width: 4.4em;
+  color: var(--muted);
+  font-family: var(--mono);
+  flex: none;
+}
+
+.raise-bar {
+  flex: 1;
+  height: 8px;
+  background: #edf1ee;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.raise-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.35s ease;
+  background: var(--accent);
+}
+
+.raise-bar i.mood {
+  background: #e78a9b;
+}
+
+.raise-bar i.full {
+  background: #e0b25c;
+}
+
+.raise-bar i.bond {
+  background: var(--accent);
+}
+
+.raise-bar-val {
+  width: 9.5em;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.raise-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.raise-act {
+  height: 32px;
+  padding: 0 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: border-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.raise-act:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.raise-act:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.raise-act:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+
+@media (max-width: 900px) {
+  /* 移动端随壳层自然增长走整页滚动(与应用其他视图一致),舞台/互动上下堆叠 */
+  .raise-page,
+  .raise-body {
+    flex: none;
+    height: auto;
+  }
+
+  .raise-body {
+    flex-direction: column;
+  }
+
+  .raise-left {
+    flex: none;
+    flex-direction: column;
+  }
+
+  .raise-side {
+    width: 100%;
+    border-left: none;
+    padding-left: 0;
+    border-top: 1px dashed var(--line);
+    padding-top: 12px;
+    overflow: visible;
+  }
+
+  .raise-side .raise-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .raise-side .raise-act {
+    width: auto;
+  }
+
+  .raise-side .raise-badges {
+    justify-content: center;
+  }
+}
+
+/* ---------- 养成页互动增强:连击/飞食/撒花/小游戏/徽章 ---------- */
+
+.raise-head-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.raise-streak {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: #c2410c;
+  background: #fff4e6;
+  border: 1px solid #f5d9b8;
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+.raise-act.locked {
+  color: var(--text-3);
+}
+
+/* 连击浮标:x2…x4 计数,第 5 下比心高亮 */
+.raise-combo {
+  position: absolute;
+  top: 46px;
+  right: 12%;
+  z-index: 4;
+  font-family: var(--mono);
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 12px;
+  box-shadow: 0 6px 18px rgba(16, 24, 40, 0.12);
+  pointer-events: none;
+  animation: raise-combo-pop 0.18s ease;
+}
+
+.raise-combo.done {
+  color: #d1517a;
+  border-color: #eec6d4;
+  font-size: 21px;
+}
+
+@keyframes raise-combo-pop {
+  0% {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* 飞行食物:从按钮沿弧线飞向嘴部,到达缩小消失(--dx/--dy 为位移向量) */
+.raise-food {
+  position: absolute;
+  z-index: 4;
+  font-size: 22px;
+  line-height: 1;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 4px rgba(16, 24, 40, 0.2));
+  animation: raise-food-fly 0.62s cubic-bezier(0.45, 0.05, 0.55, 0.95) forwards;
+}
+
+@keyframes raise-food-fly {
+  0% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+  55% {
+    transform: translate(calc(-50% + var(--dx) * 0.55), calc(-50% + var(--dy) * 0.5 - 44px)) scale(1.12);
+  }
+  100% {
+    transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(0.45);
+    opacity: 0.95;
+  }
+}
+
+/* 升级撒花:一次性 24 片,2.5s 后整体卸载 */
+.raise-confetti {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.raise-confetti i {
+  position: absolute;
+  top: -14px;
+  width: 8px;
+  height: 14px;
+  border-radius: 2px;
+  opacity: 0.95;
+  animation-name: raise-confetti-fall;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+@keyframes raise-confetti-fall {
+  0% {
+    transform: translateY(0) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(680px) rotate(540deg);
+    opacity: 0.55;
+  }
+}
+
+/* 模型内置动作分组:两列紧凑格 */
+.raise-emotes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.raise-emote {
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 0 4px;
+  white-space: nowrap;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.raise-emote:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.raise-emote.on {
+  border-color: var(--accent);
+  color: var(--accent-deep);
+  background: var(--accent-tint);
+  font-weight: 600;
+}
+
+/* 成就徽章行 */
+.raise-badges {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.raise-badge {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 9px;
+  background: var(--card);
+  opacity: 0.4;
+  filter: grayscale(1);
+}
+
+.raise-badge.on {
+  opacity: 1;
+  filter: none;
+  border-color: var(--accent-soft);
+  background: var(--accent-tint);
+}
+
+/* 接大葱小游戏覆盖层 */
+.raise-game {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  background: rgba(255, 255, 255, 0.96);
+  border-radius: 12px;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  overflow: hidden;
+}
+
+.raise-game-hud {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 12px 4px;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.raise-game-hud .bad {
+  color: #b3392e;
+}
+
+.raise-game-quit {
+  border: 1px solid var(--line);
+  background: var(--card);
+  border-radius: 6px;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.raise-game-quit:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.raise-game-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.raise-game-item {
+  position: absolute;
+  top: 0;
+  left: 0;
+  font-size: 26px;
+  line-height: 1;
+  will-change: transform;
+}
+
+.raise-game-item.star {
+  font-size: 22px;
+}
+
+.raise-game-basket {
+  position: absolute;
+  bottom: 40px;
+  left: 0;
+  font-size: 34px;
+  line-height: 1;
+  will-change: transform;
+  filter: drop-shadow(0 3px 6px rgba(16, 24, 40, 0.18));
+}
+
+.raise-game-hint {
+  position: absolute;
+  bottom: 8px;
+  width: 100%;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-3);
+}

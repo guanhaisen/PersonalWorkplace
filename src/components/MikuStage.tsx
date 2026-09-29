@@ -45,16 +45,18 @@ function isNightHour() {
   return h >= 21 || h < 6
 }
 
-// 舞台尺寸:竖向容器,模型底部居中站立
+// 点头 tween 时长(ParamAngleY 在此区间正弦两摆后归零)
+const NOD_MS = 700
+
+// 舞台尺寸:竖向容器,模型底部居中站立(悬浮球默认 170×230;养成页传更大的尺寸复用同一套逻辑)
 const STAGE_W = 170
 const STAGE_H = 230
 
-// QQ 人形态(Param131/136)的 morph 实测:角色缩至约 37%,头顶钉在原画布顶部,
-// 脚底升高约 140 舞台像素、视觉中心右偏约 26px。变身时把模型平移回去,
-// 让 Q 版小人站回按钮底沿、居中于缩小后的盒子(按钮尺寸见 CSS .ai-fab.miku-qq)。
-const QQ_PIVOT_SHIFT = { x: -26, y: 140 }
-const BASE_POS_NORMAL = { x: STAGE_W / 2, y: STAGE_H }
-const BASE_POS_QQ = { x: STAGE_W / 2 + QQ_PIVOT_SHIFT.x, y: STAGE_H + QQ_PIVOT_SHIFT.y }
+// QQ 人形态(Param131/136)的 morph 实测(按 230 高的舞台标定):角色缩至约 37%,
+// 头顶钉在原画布顶部,脚底升高约 140 舞台像素、视觉中心右偏约 26px。变身时把模型
+// 平移回去,让 Q 版小人站回容器底沿、居中于盒子;其他舞台高度按比例缩放偏移量
+const QQ_SHIFT_REF_H = 230
+const qqShiftFor = (h: number) => ({ x: (-26 * h) / QQ_SHIFT_REF_H, y: (140 * h) / QQ_SHIFT_REF_H })
 
 // 互动事件名(与 App 解耦,通过 window CustomEvent 通信)
 export const MIKU_EXPRESS_EVENT = 'miku:express'
@@ -72,6 +74,14 @@ export const MIKU_THINKING_EVENT = 'miku:thinking'
 export const MIKU_SPEAK_EVENT = 'miku:speak'
 /** 闲置碎碎念:请求外层(App)按当前数据冒一句气泡 */
 export const MIKU_MURMUR_EVENT = 'miku:murmur'
+/** 连击点按广播(detail {count, done})——养成页的连击浮标用 */
+export const MIKU_COMBO_EVENT = 'miku:combo'
+/** 无冷却的轻庆祝(detail 无):弹跳 + 随机轻表情,小游戏连击反馈用 */
+export const MIKU_CHEER_EVENT = 'miku:cheer'
+/** 点头回应(无 detail):头部 ParamAngleY 短促两摆 */
+export const MIKU_NOD_EVENT = 'miku:nod'
+/** 眯眼害羞(detail {ms}):EyeL/R_Squint 保持一段时间 */
+export const MIKU_SQUINT_EVENT = 'miku:squint'
 
 declare global {
   interface Window {
@@ -82,9 +92,12 @@ declare global {
 type ParamWriter = { setParameterValueById(id: string, value: number): void }
 type ParamReader = { getParameterValueById(id: string): number }
 
-/** 完成待办/习惯打卡后让 Miku 庆祝一下(未启用 Live2D 时无监听方,无副作用) */
-export function celebrateMiku() {
-  window.dispatchEvent(new CustomEvent(MIKU_CELEBRATE_EVENT))
+/** 完成待办/习惯打卡后让 Miku 庆祝一下(未启用 Live2D 时无监听方,无副作用);
+ * label 可选:养成页的气泡会播报具体事项名 */
+export function celebrateMiku(label?: string) {
+  window.dispatchEvent(
+    new CustomEvent(MIKU_CELEBRATE_EVENT, label ? { detail: { label } } : undefined),
+  )
 }
 
 // Cubism Core 是外部运行时脚本,必须在插件模块导入前就位(该模块加载时即检查 window.Live2DCubismCore),
@@ -134,6 +147,11 @@ interface Props {
   eyeFollow?: boolean
   /** 闲置彩蛋(右键菜单「显示」可关) */
   idleEnabled?: boolean
+  /** 舞台像素尺寸;悬浮球用默认,养成页传大尺寸 */
+  width?: number
+  height?: number
+  /** fab = 悬浮球内(page 变体仅影响类名,定位由外层容器负责) */
+  variant?: 'fab' | 'page'
 }
 
 export default function MikuStage({
@@ -142,10 +160,17 @@ export default function MikuStage({
   onQQChange,
   eyeFollow = true,
   idleEnabled = true,
+  width = STAGE_W,
+  height = STAGE_H,
+  variant = 'fab',
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null)
   const modelRef = useRef<Live2DModelInstance | null>(null)
   const readyRef = useRef(false)
+  // 舞台几何(QQ 偏移按舞台高度比例缩放):挂载后不变,供初始化与事件处理器闭包使用
+  const qqShift = qqShiftFor(height)
+  const basePosNormal = { x: width / 2, y: height }
+  const basePosQQ = { x: width / 2 + qqShift.x, y: height + qqShift.y }
   // 特效状态:适配缩放基准 / 弹跳起点 / 拖动摆动开关与回正标记 / 表情复位定时器 / 闲置彩蛋截止时刻
   const baseScaleRef = useRef(1)
   const bounceAtRef = useRef<number | null>(null)
@@ -159,8 +184,8 @@ export default function MikuStage({
   // 闲置彩蛋开关镜像(供 interval 闭包读取最新值)
   const idleOnRef = useRef(idleEnabled)
   // 模型脚底支点(舞台坐标):QQ 形态下平移,变身时逐帧滑向目标,避免跳变
-  const basePosRef = useRef({ ...BASE_POS_NORMAL })
-  const basePosTargetRef = useRef({ ...BASE_POS_NORMAL })
+  const basePosRef = useRef({ ...basePosNormal })
+  const basePosTargetRef = useRef({ ...basePosNormal })
   // 等 AI 回复的慢速轻晃 / 挠痒痒扭动截止时刻 / 说话口型截止时刻 / 口型进行中标记
   const thinkingRef = useRef(false)
   const wiggleUntilRef = useRef(0)
@@ -172,12 +197,23 @@ export default function MikuStage({
   const comboLastAtRef = useRef(0)
   const celebrateAtRef = useRef(0)
   const nightWasRef = useRef(false)
+  // 点头/眯眼 tween:截止时刻与「进行中→结束需补写归零」标记(与夜晚眼皮同套路)
+  const nodUntilRef = useRef(0)
+  const nodWasRef = useRef(false)
+  const squintUntilRef = useRef(0)
+  const squintWasRef = useRef(false)
   // 保留动作(右键菜单「动作」选的表情):本会话内一直保持;期间的点击反应/AI 回复
   // 表情/闲置彩蛋都是临时客串,结束后回到她。null = 无保留(临时表情结束即复原)。
   // 值为 DANCE_PIN 时 = 循环拿葱舞。刷新页面回默认待机,不做跨刷新记忆
   const pinnedRef = useRef<string | null>(null)
   // 循环拿葱舞的重启定时器(独立于表情复原定时器:临时表情不会打断舞蹈循环)
   const danceLoopTimerRef = useRef<number | undefined>(undefined)
+  // PIXI Application 引用:IntersectionObserver 据此暂停/恢复渲染(离屏不烧 GPU)
+  const appRef = useRef<PIXI.Application | null>(null)
+  const onScreenRef = useRef(true)
+  // 舞台是否可见:挂在 display:none 子树(如切走后的养成页/隐藏的悬浮球)里时应
+  // 完全静默——不响应 window 互动事件、不做闲置彩蛋,否则看不见的她会在背后偷偷演
+  const stageVisible = () => !!hostRef.current && hostRef.current.getClientRects().length > 0
 
   // 临时表情结束后的复原:有保留动作则回到她(舞蹈保留回葱表情),否则完全复位
   const restoreExpressionSafe = () => {
@@ -252,8 +288,8 @@ export default function MikuStage({
     const model = modelRef.current
     const r = hostRef.current?.getBoundingClientRect()
     if (!model || !r) return
-    const x = r.left + STAGE_W / 2 + (Math.random() * 2 - 1) * 900
-    const y = r.top + STAGE_H / 2 + (Math.random() * 2 - 1) * 700
+    const x = r.left + width / 2 + (Math.random() * 2 - 1) * 900
+    const y = r.top + height / 2 + (Math.random() * 2 - 1) * 700
     model.focus(x, y)
   }
 
@@ -321,14 +357,17 @@ export default function MikuStage({
         const settings = await buildModelSettings()
         if (disposed) return
         app = new PIXI.Application({
-          width: STAGE_W,
-          height: STAGE_H,
+          width,
+          height,
           backgroundAlpha: 0,
           antialias: true,
           resolution: Math.min(window.devicePixelRatio || 1, 2),
           autoDensity: true,
         })
         if (disposed || !hostRef.current) return
+        appRef.current = app
+        // 挂载以来一直离屏(IO 已判定)的话,直接以暂停态起步
+        if (!onScreenRef.current) app.ticker.stop()
         hostRef.current.appendChild(app.view as HTMLCanvasElement)
         model = await Live2DModelCtor.from(settings, { autoUpdate: true, autoInteract: false })
         if (disposed) {
@@ -340,10 +379,10 @@ export default function MikuStage({
         ;(window as unknown as Record<string, unknown>).__miku = model
         // 整身放入容器:底部居中,留一点余量防止触边裁切
         model.anchor.set(0.5, 1)
-        const s = Math.min(STAGE_W / model.width, STAGE_H / model.height) * 0.96
+        const s = Math.min(width / model.width, height / model.height) * 0.96
         model.scale.set(s)
         baseScaleRef.current = s
-        model.position.set(STAGE_W / 2, STAGE_H)
+        model.position.set(width / 2, height)
         // 关闭作者水印:模型出厂 Param137=0(水印默认打开),置 1 即作者预留的关闭档
         // (水印.exp3.json 同款设置),已实测该参数无其他作用且跨帧保持
         ;(model.internalModel.coreModel as ParamWriter).setParameterValueById('Param137', 1)
@@ -384,6 +423,26 @@ export default function MikuStage({
             nightWasRef.current = false
             core.setParameterValueById('ParamEyeLOpen', 1)
             core.setParameterValueById('ParamEyeROpen', 1)
+          }
+          // 点头:ParamAngleY 正弦两摆后自然归零(振幅随剩余时间衰减)。
+          // focus 的眼神跟随每帧写头部角度,这里必须写在 update 之后才压得住
+          if (nodUntilRef.current > t) {
+            nodWasRef.current = true
+            const k = (nodUntilRef.current - t) / NOD_MS
+            core.setParameterValueById('ParamAngleY', -Math.sin(k * Math.PI * 4) * 13 * k)
+          } else if (nodWasRef.current) {
+            nodWasRef.current = false
+            core.setParameterValueById('ParamAngleY', 0)
+          }
+          // 眯眼害羞:EyeL/R_Squint 是独立参数,与眨眼(眼皮开合)互不覆盖
+          if (squintUntilRef.current > t) {
+            squintWasRef.current = true
+            core.setParameterValueById('EyeL_Squint', 1)
+            core.setParameterValueById('EyeR_Squint', 1)
+          } else if (squintWasRef.current) {
+            squintWasRef.current = false
+            core.setParameterValueById('EyeL_Squint', 0)
+            core.setParameterValueById('EyeR_Squint', 0)
           }
         }
         // 每帧特效:拖动/挠痒痒/思考的摆动 + 弹跳弹簧(摆动互斥,弹跳独立)
@@ -470,6 +529,7 @@ export default function MikuStage({
       disposed = true
       readyRef.current = false
       modelRef.current = null
+      appRef.current = null
       delete (window as unknown as Record<string, unknown>).__miku
       delete (window as unknown as Record<string, unknown>).__mikuDebug
       window.clearTimeout(expressionTimerRef.current)
@@ -478,6 +538,25 @@ export default function MikuStage({
       app?.destroy(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // 离屏暂停:display:none(切走养成页/隐藏悬浮球)时停掉渲染 ticker,回屏再恢复。
+  // Live2D 的参数更新挂在共享 ticker 上不受影响,只是不再画——回来时动作是时间驱动的,自然衔接
+  useEffect(() => {
+    const el = hostRef.current
+    if (!el || typeof IntersectionObserver === 'undefined') return
+    const io = new IntersectionObserver(
+      (entries) => {
+        const visible = entries.some((e) => e.isIntersecting)
+        onScreenRef.current = visible
+        if (!appRef.current) return
+        if (visible) appRef.current.ticker.start()
+        else appRef.current.ticker.stop()
+      },
+      { threshold: 0.01 },
+    )
+    io.observe(el)
+    return () => io.disconnect()
   }, [])
 
   // 夜晚困困模式开关:按本地小时每分钟轮询(21:00–06:00),调试可用 __mikuDebug.setNight 覆盖
@@ -493,6 +572,7 @@ export default function MikuStage({
   useEffect(() => {
     if (!eyeFollow) return
     const onMove = (e: PointerEvent) => {
+      if (!stageVisible()) return
       const model = modelRef.current
       const host = hostRef.current
       if (!model || !host || !readyRef.current) return
@@ -501,17 +581,27 @@ export default function MikuStage({
     }
     window.addEventListener('pointermove', onMove)
     return () => window.removeEventListener('pointermove', onMove)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eyeFollow])
 
-  // 互动事件:分区点击反馈 / 拖动摆动开关 / AI 回复表情 / 庆祝 / 思考与说话 / 右键菜单表演
+  // 互动事件:分区点击反馈 / 拖动摆动开关 / AI 回复表情 / 庆祝 / 思考与说话 / 右键菜单表演。
+  // 每个处理器先做可见性检查:同页挂了两个舞台实例(悬浮球 + 养成页)时只有可见的那个响应
   useEffect(() => {
     const onTap = (e: Event) => {
+      if (!stageVisible()) return
       const clientY = (e as CustomEvent).detail?.clientY as number | undefined
       const now = performance.now()
-      // 连击彩蛋:短时间内连点,第 5 下比心
+      // 连击彩蛋:短时间内连点,第 5 下比心;连击过程广播给外层(养成页连击浮标)
       comboCountRef.current =
         now - comboLastAtRef.current <= COMBO_WINDOW_MS ? comboCountRef.current + 1 : 1
       comboLastAtRef.current = now
+      if (comboCountRef.current >= 2) {
+        window.dispatchEvent(
+          new CustomEvent(MIKU_COMBO_EVENT, {
+            detail: { count: comboCountRef.current, done: comboCountRef.current >= COMBO_N },
+          }),
+        )
+      }
       if (comboCountRef.current >= COMBO_N) {
         comboCountRef.current = 0
         showExpression('比心', 3000)
@@ -540,19 +630,23 @@ export default function MikuStage({
       bounceAtRef.current = now
     }
     const onDragStart = () => {
+      if (!stageVisible()) return
       draggingRef.current = true
     }
     const onDragEnd = () => {
+      if (!stageVisible()) return
       draggingRef.current = false
       // 落地小弹跳
       if (readyRef.current) bounceAtRef.current = performance.now()
     }
     const onExpress = () => {
+      if (!stageVisible()) return
       showExpression(LIGHT_EXPRESSIONS[Math.floor(Math.random() * LIGHT_EXPRESSIONS.length)])
     }
     // 右键菜单「动作」:pin = 保留动作(一直保持);不带 pin 的是一次性表演;
     // clear = 取消保留回到默认;dance = 拿葱舞(一次性)
     const onPlay = (e: Event) => {
+      if (!stageVisible()) return
       const detail = (e as CustomEvent).detail as
         | { expression?: string; dance?: boolean; talkMs?: number; pin?: boolean; clear?: boolean }
         | undefined
@@ -573,27 +667,46 @@ export default function MikuStage({
     // 双击切换 QQ 人形态:持续参数档,进出都带弹跳;变身后不受表情复位影响。
     // 同时平滑平移模型支点(站回按钮底沿)并通知外层缩放按钮盒。
     const onQQ = () => {
-      if (!readyRef.current) return
+      if (!stageVisible() || !readyRef.current) return
       const entering = qqTargetRef.current === 0
       qqTargetRef.current = entering ? 1 : 0
-      basePosTargetRef.current = entering ? { ...BASE_POS_QQ } : { ...BASE_POS_NORMAL }
+      basePosTargetRef.current = entering ? { ...basePosQQ } : { ...basePosNormal }
       bounceAtRef.current = performance.now()
       onQQChange?.(entering)
     }
     const onThinking = (e: Event) => {
+      if (!stageVisible()) return
       thinkingRef.current = !!(e as CustomEvent).detail?.on
     }
     const onSpeak = (e: Event) => {
+      if (!stageVisible()) return
       const ms = (e as CustomEvent).detail?.ms as number | undefined
       talkUntilRef.current = performance.now() + Math.min(Math.max(ms ?? 2200, 1200), 5000)
       if (readyRef.current) bounceAtRef.current = performance.now()
     }
     const onCelebrate = () => {
+      if (!stageVisible()) return
       const now = performance.now()
       if (now - celebrateAtRef.current < CELEBRATE_COOLDOWN_MS) return
       celebrateAtRef.current = now
       showExpression(Math.random() < 0.5 ? '比心' : '圈圈', 3200)
       bounceAtRef.current = now
+    }
+    // 无冷却轻庆祝:小游戏连击反馈(celebrate 的 1.5s 冷却会吞掉密集反应)
+    const onCheer = () => {
+      if (!stageVisible() || !readyRef.current) return
+      showExpression(LIGHT_EXPRESSIONS[Math.floor(Math.random() * LIGHT_EXPRESSIONS.length)], 1600)
+      bounceAtRef.current = performance.now()
+    }
+    const onNod = () => {
+      if (!stageVisible() || !readyRef.current) return
+      nodUntilRef.current = performance.now() + NOD_MS
+    }
+    const onSquint = (e: Event) => {
+      if (!stageVisible() || !readyRef.current) return
+      const ms = (e as CustomEvent).detail?.ms as number | undefined
+      squintUntilRef.current = performance.now() + Math.min(Math.max(ms ?? 2600, 800), 5000)
+      showExpression('脸红', 2600)
     }
     window.addEventListener(MIKU_TAP_EVENT, onTap)
     window.addEventListener(MIKU_DRAG_START_EVENT, onDragStart)
@@ -604,6 +717,9 @@ export default function MikuStage({
     window.addEventListener(MIKU_CELEBRATE_EVENT, onCelebrate)
     window.addEventListener(MIKU_THINKING_EVENT, onThinking)
     window.addEventListener(MIKU_SPEAK_EVENT, onSpeak)
+    window.addEventListener(MIKU_CHEER_EVENT, onCheer)
+    window.addEventListener(MIKU_NOD_EVENT, onNod)
+    window.addEventListener(MIKU_SQUINT_EVENT, onSquint)
     return () => {
       window.removeEventListener(MIKU_TAP_EVENT, onTap)
       window.removeEventListener(MIKU_DRAG_START_EVENT, onDragStart)
@@ -614,6 +730,9 @@ export default function MikuStage({
       window.removeEventListener(MIKU_CELEBRATE_EVENT, onCelebrate)
       window.removeEventListener(MIKU_THINKING_EVENT, onThinking)
       window.removeEventListener(MIKU_SPEAK_EVENT, onSpeak)
+      window.removeEventListener(MIKU_CHEER_EVENT, onCheer)
+      window.removeEventListener(MIKU_NOD_EVENT, onNod)
+      window.removeEventListener(MIKU_SQUINT_EVENT, onSquint)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -635,6 +754,7 @@ export default function MikuStage({
     }
     const check = () => {
       if (!idleOnRef.current || document.hidden || !readyRef.current || draggingRef.current) return
+      if (!stageVisible()) return
       const now = Date.now()
       if (now < idleUntilRef.current) return
       if (now - lastActive < IDLE_MS || now - lastAct < IDLE_COOLDOWN_MS) return
@@ -668,6 +788,11 @@ export default function MikuStage({
 
   // 绝对定位挂在按钮底部居中,不参与布局;ready 前无画布,不可见也不拦事件
   return (
-    <div ref={hostRef} className="miku-stage" style={{ width: STAGE_W, height: STAGE_H }} aria-hidden="true" />
+    <div
+      ref={hostRef}
+      className={`miku-stage${variant === 'page' ? ' page' : ''}`}
+      style={{ width, height }}
+      aria-hidden="true"
+    />
   )
 }

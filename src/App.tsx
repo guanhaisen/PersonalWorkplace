@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type CSSProperties } from 'react'
 import type { AppData } from './types'
-import { ApiError, getSettings, loadAll, logout, me, saveCollection, saveSettings, nowLocalStr, todayStr, streak, type CollectionKey } from './api'
+import { ApiError, getSettings, loadAll, logout, me, saveCollection, saveSettings, nowLocalStr, type CollectionKey } from './api'
+import { applyPet, freshPet, makeMurmurLine, sanitizePet, type MikuPet } from './mikuPet'
 import LoginView from './components/LoginView'
 import TodoPanel from './components/TodoPanel'
 import CalendarPanel from './components/CalendarPanel'
@@ -12,9 +13,19 @@ import ReportPanel from './components/ReportPanel'
 import LinksBar from './components/LinksBar'
 import StartPageModal from './components/StartPageModal'
 import ReminderPopup from './components/ReminderPopup'
-import MikuStage, { MIKU_DRAG_END_EVENT, MIKU_DRAG_START_EVENT, MIKU_MURMUR_EVENT, MIKU_PLAY_EVENT, MIKU_QQ_EVENT, MIKU_TAP_EVENT } from './components/MikuStage'
+import MikuStage, {
+  MIKU_CELEBRATE_EVENT,
+  MIKU_DRAG_END_EVENT,
+  MIKU_DRAG_START_EVENT,
+  MIKU_EXPRESS_EVENT,
+  MIKU_MURMUR_EVENT,
+  MIKU_PLAY_EVENT,
+  MIKU_QQ_EVENT,
+  MIKU_TAP_EVENT,
+} from './components/MikuStage'
+import MikuRaisePanel from './components/MikuRaisePanel'
 import MikuMenu, { type MikuMenuItem } from './components/MikuMenu'
-import { BrandMark, IconAi, IconCalendar, IconGitHub, IconGrip, IconHabit, IconKeys, IconOverview, IconReport, IconSchedule, IconTodo } from './components/icons'
+import { BrandMark, IconAi, IconCalendar, IconGitHub, IconGrip, IconHabit, IconHeart, IconKeys, IconOverview, IconReport, IconSchedule, IconTodo } from './components/icons'
 import CommandPalette, { type Command } from './components/CommandPalette'
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
@@ -24,7 +35,7 @@ export type UpdateFn = <K extends CollectionKey>(
   updater: (items: AppData[K]) => AppData[K],
 ) => void
 
-export type ViewKey = 'overview' | 'todos' | 'schedule' | 'habits' | 'ai' | 'report'
+export type ViewKey = 'overview' | 'todos' | 'schedule' | 'habits' | 'ai' | 'raise' | 'report'
 
 // ---------- 总览布局:两行卡槽,拖拽互换 ----------
 
@@ -75,6 +86,7 @@ const NAV_META: Record<ViewKey, { label: string; icon: JSX.Element }> = {
   schedule: { label: '课表', icon: <IconSchedule /> },
   habits: { label: '习惯', icon: <IconHabit /> },
   ai: { label: 'Miku', icon: <IconAi /> },
+  raise: { label: '养成', icon: <IconHeart /> },
   report: { label: '周报', icon: <IconReport /> },
 }
 
@@ -91,7 +103,7 @@ const CAPSULE_META: Record<PanelId, { label: string; icon: JSX.Element }> = {
 
 // 导航顺序可自由调整(拖拽),数字快捷键跟随位置
 const NAV_KEY = 'nav.order.v1'
-const DEFAULT_NAV: ViewKey[] = ['overview', 'todos', 'schedule', 'habits', 'ai', 'report']
+const DEFAULT_NAV: ViewKey[] = ['overview', 'todos', 'schedule', 'habits', 'ai', 'raise', 'report']
 
 function loadNavOrder(): ViewKey[] {
   try {
@@ -116,54 +128,6 @@ function loadNavOrder(): ViewKey[] {
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
 const WEEKDAYS_EN = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT']
 const GITHUB_REPO = 'https://github.com/guanhaisen/PersonalWorkplace'
-
-// ---------- 闲置碎碎念:Miku 闲置彩蛋偶尔冒一句基于当前数据的话 ----------
-
-const pad2 = (n: number) => String(n).padStart(2, '0')
-const localStamp = (d: Date) =>
-  `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
-
-function makeMurmurLine(d: AppData | null): string {
-  const now = new Date()
-  const h = now.getHours()
-  const night = h >= 21 || h < 6
-  const todos = d?.todos ?? []
-  const pending = todos.filter((t) => !t.done)
-  const overdue = pending.filter((t) => !!t.dueDate && t.dueDate < todayStr())
-  const habits = d?.habits ?? []
-  const unchecked = habits.filter((hb) => !hb.records[todayStr()])
-  const hm = `${pad2(h)}:${pad2(now.getMinutes())}`
-  const classesLeft = (d?.courses ?? []).filter((c) => c.weekday % 7 === now.getDay() && c.end > hm)
-  const soonReminder = (d?.reminders ?? []).find(
-    (r) => !r.firedAt && r.dueAt >= nowLocalStr() && r.dueAt <= localStamp(new Date(Date.now() + 3_600_000)),
-  )
-
-  const pool: string[] = []
-  if (night) {
-    pool.push('夜深了,我也犯困了…你也早点休息哦', '这么晚还在忙吗?别熬太晚呀')
-    if (pending.length > 0) pool.push(`还有 ${pending.length} 件待办,做完早点睡哦`)
-  } else if (h < 11) {
-    pool.push('早上好呀,新的一天也要元气满满哦')
-    if (classesLeft.length > 0) pool.push(`今天还有 ${classesLeft.length} 节课,别迟到啦`)
-    if (unchecked[0]) pool.push(`新的一天,从打卡「${unchecked[0].name}」开始吧`)
-  } else if (h < 14) {
-    pool.push('午休一下下,下午更有精神哦', '午饭吃了吗?吃饱才有力气干活')
-  } else if (h < 18) {
-    pool.push('记得起来活动一下,眼睛也要休息哦', '喝口水,休息一下吧~')
-  } else {
-    pool.push('今天辛苦啦~', '晚饭吃了吗?别饿着肚子干活')
-  }
-  if (!night) {
-    if (overdue.length > 0) pool.push(`有 ${overdue.length} 件待办已经逾期了,先处理一下?`)
-    if (pending.length > 0 && h >= 14) pool.push(`还有 ${pending.length} 个待办没完成,加油鸭`)
-    if (unchecked[0]) pool.push(`今天的「${unchecked[0].name}」还没打卡哦`)
-    if (soonReminder) pool.push(`「${soonReminder.title}」一小时后就要提醒你咯`)
-    const proud = habits.find((hb) => !!hb.records[todayStr()] && streak(hb.records) >= 3)
-    if (proud) pool.push(`「${proud.name}」已经连续 ${streak(proud.records)} 天啦,好厉害!`)
-  }
-  if (pool.length === 0) pool.push('有什么想做的,随时告诉我哦~')
-  return pool[Math.floor(Math.random() * pool.length)]
-}
 
 export default function App() {
   // ---------- 登录会话:先确认身份,再拉当前账号的数据 ----------
@@ -415,6 +379,25 @@ export default function App() {
   const murmurTimer = useRef<number | null>(null)
   const lastMurmur = useRef('')
 
+  // ---------- Miku 养成:亲密度/心情/饱食度,按账号存 /api/settings 的 mikuPet 键 ----------
+  // 养成页挂载后常驻(离开仅 display:none 隐藏),raiseVisited 记录是否已首次进入
+  const [pet, setPet] = useState<MikuPet>(freshPet)
+  const [petLoaded, setPetLoaded] = useState(false)
+  const [raiseVisited, setRaiseVisited] = useState(false)
+  const petRef = useRef(pet)
+  petRef.current = pet // 服务端加载/互动更新后都保持镜像,事件回调与关页兜底读最新值
+  const petSaveTimer = useRef<number | null>(null)
+  const onPet = useCallback((next: MikuPet) => {
+    petRef.current = next
+    setPet(next)
+    if (petSaveTimer.current !== null) window.clearTimeout(petSaveTimer.current)
+    // 防抖 800ms:连续互动只落一次库
+    petSaveTimer.current = window.setTimeout(() => {
+      petSaveTimer.current = null
+      saveSettings({ mikuPet: petRef.current }).catch(() => {})
+    }, 800)
+  }, [])
+
   const hideMiku = () => {
     setMikuHidden(true)
     localStorage.setItem('miku.hidden', '1')
@@ -583,11 +566,15 @@ export default function App() {
     return () => document.removeEventListener('mousedown', onDown)
   }, [fabChatOpen])
 
+  // 当前视图镜像:事件回调里读取最新值而不必重新订阅
+  const viewRef = useRef(view)
+  viewRef.current = view
+
   // 闲置碎碎念:收到 MikuStage 彩蛋请求,按当前数据挑一句台词锚在 Miku 头顶冒 5 秒;
-  // 聊天窗/菜单开着时不出(位置会叠)
+  // 聊天窗/菜单开着时不出(位置会叠);养成页时也不出(那边由页面自己的气泡接管)
   useEffect(() => {
     const onMurmur = () => {
-      if (document.hidden || fabChatOpen || mikuMenu) return
+      if (document.hidden || fabChatOpen || mikuMenu || viewRef.current === 'raise') return
       let text = makeMurmurLine(dataRef.current)
       for (let i = 0; i < 3 && text === lastMurmur.current; i++) text = makeMurmurLine(dataRef.current)
       if (text === lastMurmur.current) return
@@ -617,8 +604,21 @@ export default function App() {
     setMurmur(null)
   }, [fabChatOpen, mikuMenu])
 
+  // 养成数值的被动来源:完成待办/打卡的庆祝(各面板派发)让亲密度 +3、心情 +2;
+  // 与 Miku 的每轮 AI 对话(回复时的轻表情)让亲密度 +2。都走 onPet 统一防抖落库
   useEffect(() => {
-    if (view === 'ai') {
+    const onCelebrate = () => onPet(applyPet(petRef.current, { bond: 3, mood: 2 }))
+    const onExpress = () => onPet(applyPet(petRef.current, { bond: 2 }))
+    window.addEventListener(MIKU_CELEBRATE_EVENT, onCelebrate)
+    window.addEventListener(MIKU_EXPRESS_EVENT, onExpress)
+    return () => {
+      window.removeEventListener(MIKU_CELEBRATE_EVENT, onCelebrate)
+      window.removeEventListener(MIKU_EXPRESS_EVENT, onExpress)
+    }
+  }, [onPet])
+
+  useEffect(() => {
+    if (view === 'ai' || view === 'raise') {
       setFabChatOpen(false)
       if (fabPopTimer.current !== null) {
         window.clearTimeout(fabPopTimer.current)
@@ -847,15 +847,21 @@ export default function App() {
     if (authUser) load()
   }, [authUser, load])
 
-  // 显示名跟账号走:登录后从服务端取(空 = 回退用户名),换设备也一致
+  // 显示名跟账号走:登录后从服务端取(空 = 回退用户名),换设备也一致;
+  // 同一次请求顺带取回 Miku 养成存档(拿不到也放行,用默认值)
   useEffect(() => {
     if (!authUser) return
     let cancelled = false
     getSettings()
       .then((s) => {
-        if (!cancelled) setDisplayName(typeof s?.displayName === 'string' ? s.displayName : '')
+        if (cancelled) return
+        setDisplayName(typeof s?.displayName === 'string' ? s.displayName : '')
+        setPet(sanitizePet(s?.mikuPet))
+        setPetLoaded(true)
       })
-      .catch(() => {})
+      .catch(() => {
+        if (!cancelled) setPetLoaded(true)
+      })
     return () => {
       cancelled = true
     }
@@ -875,6 +881,10 @@ export default function App() {
     for (const t of Object.values(retryTimers.current)) clearTimeout(t)
     retryTimers.current = {}
     retryCount.current = {}
+    if (petSaveTimer.current !== null) {
+      window.clearTimeout(petSaveTimer.current)
+      petSaveTimer.current = null
+    }
     setData(null)
     setSaveState('idle')
     setLoadError(false)
@@ -882,6 +892,9 @@ export default function App() {
     setFabChatOpen(false)
     setView('overview')
     setDisplayName('')
+    setPet(freshPet())
+    setPetLoaded(false)
+    setRaiseVisited(false)
     setAuthUser(null)
   }, [])
 
@@ -943,9 +956,15 @@ export default function App() {
     }
   }, [flush])
 
-  // 关页兜底:把还没保存成功的集合用 sendBeacon 发出
+  // 关页兜底:把还没保存成功的集合用 sendBeacon 发出;养成存档的防抖窗口内关闭,
+  // 用 keepalive fetch 立即补一枪(sendBeacon 只能 POST,settings 端点是 PUT)
   useEffect(() => {
     const onBeforeUnload = () => {
+      if (petSaveTimer.current !== null) {
+        window.clearTimeout(petSaveTimer.current)
+        petSaveTimer.current = null
+        saveSettings({ mikuPet: petRef.current }, true).catch(() => {})
+      }
       const current = dataRef.current
       if (!current) return
       for (const key of failedKeys.current) {
@@ -1075,6 +1094,10 @@ export default function App() {
     )
   }
   if (!data) return <div className="center-hint">加载中…</div>
+
+  // 首次进入养成页时标记(渲染期调整 state,立即重渲染挂载养成面板,避免空一帧);
+  // 之后该面板常驻,切换视图只做显示/隐藏
+  if (view === 'raise' && !raiseVisited) setRaiseVisited(true)
 
   // ---------- Miku 右键菜单:菜单树(依赖 data 与各项状态,放在数据守卫之后) ----------
   const upcomingReminders = (data.reminders ?? [])
@@ -1390,6 +1413,8 @@ export default function App() {
             schedule: [['schedule']],
             habits: [['hab']],
             ai: [['ai']],
+            // 养成页不进面板网格(独立渲染在 board 之后),board 借 CSS 隐藏
+            raise: [],
             report: [['report']],
           }
           const isOverview = view === 'overview'
@@ -1493,6 +1518,21 @@ export default function App() {
           )
         })()}
 
+        {/* Miku 养成页:独立于面板网格(避免网格重排把大舞台拆了重挂),首次进入后
+            常驻挂载、离开仅隐藏;进入本页时右下角悬浮球隐藏(大舞台就是她本人) */}
+        <div className={`raise-page${view === 'raise' ? '' : ' hidden'}`}>
+          {raiseVisited && petLoaded && (
+            <MikuRaisePanel
+              data={data}
+              pet={pet}
+              onPet={onPet}
+              mikuAction={mikuAction}
+              mikuQQ={mikuQQ}
+              playMiku={playMiku}
+            />
+          )}
+        </div>
+
         {/* 右下角:Miku 快捷入口(Live2D),全页面常驻;可拖动,点击弹出就地聊天窗,
             右键打开桌宠菜单;「隐藏她」后经 ⌘K 命令面板唤回 */}
         {!mikuHidden && (
@@ -1505,7 +1545,9 @@ export default function App() {
               {
                 right: fabPos?.right,
                 // 未拖动过时 fabPos 为空,30 与 .ai-fab 的 CSS 默认 bottom 一致;
-                // 键盘顶起时整体上移 kb.lift,不改 fabPos 本身
+                // 键盘顶起时整体上移 kb.lift,不改 fabPos 本身;
+                // 养成页上大舞台就是她本人,悬浮球退场(display:none 而非卸载,避免 Live2D 重载)
+                display: view === 'raise' ? 'none' : undefined,
                 bottom: (fabPos?.bottom ?? 30) + (kb?.lift ?? 0),
                 '--miku-scale': mikuScale,
               } as CSSProperties

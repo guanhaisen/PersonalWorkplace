@@ -36,7 +36,7 @@ const PRESETS: { label: string; baseUrl: string; model: string }[] = [
   { label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
 ]
 
-const VIEWS: ViewKey[] = ['overview', 'todos', 'schedule', 'habits', 'ai', 'report']
+const VIEWS: ViewKey[] = ['overview', 'todos', 'schedule', 'habits', 'ai', 'raise', 'report']
 const nowIso = () => new Date().toISOString()
 
 export default function AiPanel({
@@ -134,7 +134,11 @@ export default function AiPanel({
           items.map((t) => (t.id === id && !t.done ? { ...t, done: true, completedAt: nowIso() } : t)),
         )
         // Miku 自己帮忙做完也庆祝一下(未启用 Live2D 时无监听方,无副作用)
-        window.dispatchEvent(new CustomEvent(MIKU_CELEBRATE_EVENT))
+        window.dispatchEvent(
+          new CustomEvent(MIKU_CELEBRATE_EVENT, {
+            detail: { label: `「${d.todos.find((t) => t.id === id)?.title ?? ''}」` },
+          }),
+        )
         return { ok: true }
       }
       case 'delete_todo': {
@@ -188,7 +192,9 @@ export default function AiPanel({
         applyToolUpdate('habits', (items) =>
           items.map((h) => (h.id === id ? { ...h, records: { ...h.records, [today]: true } } : h)),
         )
-        window.dispatchEvent(new CustomEvent(MIKU_CELEBRATE_EVENT))
+        window.dispatchEvent(
+          new CustomEvent(MIKU_CELEBRATE_EVENT, { detail: { label: `「${habit.name}」` } }),
+        )
         return { ok: true }
       }
       case 'add_reminder': {

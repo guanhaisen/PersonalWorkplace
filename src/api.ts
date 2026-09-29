@@ -77,11 +77,13 @@ export async function getSettings(): Promise<Record<string, unknown>> {
   return res.json()
 }
 
-export async function saveSettings(patch: Record<string, unknown>): Promise<void> {
+export async function saveSettings(patch: Record<string, unknown>, keepalive = false): Promise<void> {
   await fetch('/api/settings', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
+    // 关页兜底用:unload 期间的请求需要 keepalive 才不会被浏览器掐掉
+    keepalive,
   })
 }
 

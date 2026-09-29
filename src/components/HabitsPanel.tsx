@@ -67,9 +67,9 @@ export default function HabitsPanel({ habits, update }: Props) {
   }
 
   const toggle = (habitId: string, day: string) => {
-    // 打卡今天时让 Miku 庆祝一下(取消/补历史日期不庆祝)
+    // 打卡今天时让 Miku 庆祝一下(取消/补历史日期不庆祝);label 供养成页气泡播报
     const habit = habits.find((x) => x.id === habitId)
-    if (habit && day === today && !habit.records[day]) celebrateMiku()
+    if (habit && day === today && !habit.records[day]) celebrateMiku(`「${habit.name}」`)
     update('habits', (items) =>
       items.map((h) => {
         if (h.id !== habitId) return h

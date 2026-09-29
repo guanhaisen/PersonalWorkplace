@@ -76,8 +76,8 @@ export default function HabitDetailCard({ habit, update, onClose }: Props) {
     update('habits', (items) => items.map((h) => (h.id === habit.id ? fn(h) : h)))
 
   const setRecord = (day: string) => {
-    // 打卡今天时让 Miku 庆祝一下(取消/补历史日期不庆祝)
-    if (day === today && !habit.records[day]) celebrateMiku()
+    // 打卡今天时让 Miku 庆祝一下(取消/补历史日期不庆祝);label 供养成页气泡播报
+    if (day === today && !habit.records[day]) celebrateMiku(`「${habit.name}」`)
     patch((h) => {
       const records = { ...h.records }
       if (records[day]) delete records[day]

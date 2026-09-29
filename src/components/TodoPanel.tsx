@@ -84,8 +84,9 @@ export default function TodoPanel({ todos, update }: Props) {
   }
 
   const toggle = (id: string) => {
-    // 勾选完成时让 Miku 庆祝一下(取消完成不庆祝)
-    if (todos.some((t) => t.id === id && !t.done)) celebrateMiku()
+    // 勾选完成时让 Miku 庆祝一下(取消完成不庆祝);label 供养成页气泡播报事项名
+    const todo = todos.find((t) => t.id === id && !t.done)
+    if (todo) celebrateMiku(`「${todo.title}」`)
     update('todos', (items) =>
       items.map((t) =>
         t.id === id

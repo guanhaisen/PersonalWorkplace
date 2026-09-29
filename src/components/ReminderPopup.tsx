@@ -17,11 +17,13 @@ const BRIEFING_GAP_MS = 60 * 60 * 1000 // 巡查间隔:每小时;打开应用后
 const BRIEFING_SNOOZE_MS = 10 * 60 * 1000 // 「稍后」:10 分钟后重新浮现
 
 // 弹窗锚定 AI 悬浮球上方(与聊天窗同款锚定思路);悬浮球不在 DOM(Miku 页)时退到右下角。
-// 用 bottom 锚定,内容变多时弹窗自动向上生长,不会盖住悬浮球。
+// 养成页上悬浮球 display:none,rect 全零,同样退回兜底位置。用 bottom 锚定,内容变多时
+// 弹窗自动向上生长,不会盖住悬浮球。
 function anchorToFab(): Pos {
   const fab = document.querySelector<HTMLElement>('.ai-fab')
   if (!fab) return { right: 30, bottom: 30 }
   const r = fab.getBoundingClientRect()
+  if (r.width === 0 && r.height === 0) return { right: 30, bottom: 30 }
   return {
     right: Math.max(window.innerWidth - r.right, 8),
     bottom: Math.max(window.innerHeight - r.top + GAP, 8),

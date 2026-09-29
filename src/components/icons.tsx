@@ -97,6 +97,20 @@ export function IconAi() {
   )
 }
 
+/** 养成:爱心 */
+export function IconHeart() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M8 13.2C4.9 10.9 2.2 8.8 2.2 6.2 2.2 4.4 3.6 3 5.3 3c1 0 2 .5 2.7 1.5C8.7 3.5 9.7 3 10.7 3c1.7 0 3.1 1.4 3.1 3.2 0 2.6-2.7 4.7-5.8 7Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
 /** 周报:基线上的三根柱 */
 export function IconReport() {
   return (
