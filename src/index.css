@@ -4110,7 +4110,7 @@ kbd {
 
 /* 互动侧栏:按钮纵排 + 成就徽章 */
 .raise-side {
-  width: 176px;
+  width: 200px;
   flex: none;
   min-height: 0;
   overflow-y: auto;
@@ -4118,7 +4118,7 @@ kbd {
   flex-direction: column;
   gap: 10px;
   border-left: 1px solid var(--line);
-  padding-left: 16px;
+  padding-left: 14px;
 }
 
 .raise-side-title {
@@ -4129,19 +4129,29 @@ kbd {
 }
 
 .raise-side .raise-actions {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 7px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
 }
 
 .raise-side .raise-act {
   width: 100%;
-  justify-content: flex-start;
+  height: 30px;
+  padding: 0 4px;
+  font-size: 12px;
+  justify-content: center;
+}
+
+/* 接大葱(最后一个)独占一整行,游戏入口更醒目 */
+.raise-side .raise-actions .raise-act:last-child {
+  grid-column: span 2;
 }
 
 .raise-side .raise-badges {
   justify-content: flex-start;
+  gap: 5px;
   border-top: 1px dashed var(--line);
+  margin-top: auto;
   padding-top: 10px;
 }
 
@@ -4191,6 +4201,8 @@ kbd {
   justify-content: center;
   position: relative;
   padding-top: 44px;
+  border-radius: 10px;
+  background: radial-gradient(ellipse 62% 55% at 50% 74%, rgba(15, 118, 110, 0.07), transparent 70%);
 }
 
 .raise-stage {
@@ -4384,13 +4396,17 @@ kbd {
   }
 
   .raise-side .raise-actions {
+    display: flex;
     flex-direction: row;
     flex-wrap: wrap;
     justify-content: center;
   }
 
-  .raise-side .raise-act {
+  .raise-side .raise-act,
+  .raise-side .raise-actions .raise-act:last-child {
     width: auto;
+    height: 32px;
+    grid-column: auto;
   }
 
   .raise-side .raise-badges {
