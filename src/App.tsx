@@ -17,6 +17,7 @@ import MikuStage, {
   MIKU_CELEBRATE_EVENT,
   MIKU_DRAG_END_EVENT,
   MIKU_DRAG_START_EVENT,
+  MIKU_EMOTE_EVENT,
   MIKU_EXPRESS_EVENT,
   MIKU_MURMUR_EVENT,
   MIKU_PLAY_EVENT,
@@ -367,6 +368,10 @@ export default function App() {
   // 保留动作(右键菜单「动作」选的表情/舞蹈):本会话内一直保持、不自动复原;
   // 刷新页面回默认待机(按需求不做跨刷新记忆)
   const [mikuAction, setMikuAction] = useState<string | null>(null)
+  // 可叠加表情(脸红/圈圈/前倾,参数互不冲突可同时生效);比心/唱歌/葱/拿葱舞
+  // 共用手部骨架是三选一,仍走 mikuAction 单选。三处 UI(右键菜单/养成页动作组)
+  // 共享同一份状态
+  const [emoteOn, setEmoteOn] = useState<Record<string, boolean>>({})
   // 右键菜单与 Miku 偏好(隐藏 / 缩放 / 眼神跟随 / 闲置彩蛋),均持久化
   const [mikuMenu, setMikuMenu] = useState<{ x: number; y: number } | null>(null)
   const [mikuHidden, setMikuHidden] = useState(() => localStorage.getItem('miku.hidden') === '1')
@@ -1116,6 +1121,21 @@ export default function App() {
       }),
     )
   }
+  // 恢复默认:清空可叠加表情组 + 解除手部三选一的保留动作
+  // (普通函数而非 useCallback:依赖的 playMiku 声明于渲染后段,提前引用会 TDZ 崩溃)
+  const clearEmotes = () => {
+    window.dispatchEvent(new CustomEvent(MIKU_EMOTE_EVENT, { detail: { clearA: true } }))
+    setEmoteOn({})
+    playMiku(null)
+    setMikuAction(null)
+  }
+  // 可叠加表情开关:派发切换事件 + 镜像状态供两处 UI 的勾选。
+  // 用普通函数而非 useCallback:本段位于数据守卫之后,放钩子会因早退路径
+  // 造成「渲染钩子数前后不一致」崩溃;onClick 场景也不需要引用稳定性
+  const toggleEmote = (name: string) => {
+    window.dispatchEvent(new CustomEvent(MIKU_EMOTE_EVENT, { detail: { name } }))
+    setEmoteOn((prev) => ({ ...prev, [name]: !prev[name] }))
+  }
   const mikuMenuItems: MikuMenuItem[] = [
     { key: 'hide', label: '隐藏她', hint: '⌘K 恢复', onClick: hideMiku },
     { key: 'sep1', label: '', divider: true },
@@ -1123,12 +1143,17 @@ export default function App() {
       key: 'act',
       label: '动作',
       children: [
-        { key: 'none', label: '恢复默认', checked: !mikuAction, onClick: () => playMiku(null) },
+        {
+          key: 'none',
+          label: '恢复默认',
+          checked: !mikuAction && !Object.values(emoteOn).some(Boolean),
+          onClick: clearEmotes,
+        },
+        { key: 'blush', label: '脸红', checked: !!emoteOn['脸红'], onClick: () => toggleEmote('脸红') },
+        { key: 'circle', label: '圈圈', checked: !!emoteOn['圈圈'], onClick: () => toggleEmote('圈圈') },
+        { key: 'lean', label: '前倾', checked: !!emoteOn['前倾'], onClick: () => toggleEmote('前倾') },
         { key: 'heart', label: '比心', checked: mikuAction === '比心', onClick: () => playMiku('比心') },
-        { key: 'blush', label: '脸红', checked: mikuAction === '脸红', onClick: () => playMiku('脸红') },
-        { key: 'circle', label: '圈圈', checked: mikuAction === '圈圈', onClick: () => playMiku('圈圈') },
         { key: 'sing', label: '唱歌', checked: mikuAction === '唱歌', onClick: () => playMiku('唱歌', 3200) },
-        { key: 'lean', label: '前倾', checked: mikuAction === '前倾', onClick: () => playMiku('前倾') },
         { key: 'dance', label: '拿葱舞', checked: mikuAction === '拿葱舞', onClick: () => playMiku('拿葱舞') },
         { key: 'qq', label: 'QQ 人形态', checked: mikuQQ, onClick: () => window.dispatchEvent(new CustomEvent(MIKU_QQ_EVENT)) },
       ],
@@ -1529,6 +1554,9 @@ export default function App() {
               mikuAction={mikuAction}
               mikuQQ={mikuQQ}
               playMiku={playMiku}
+              emoteOn={emoteOn}
+              toggleEmote={toggleEmote}
+              clearEmotes={clearEmotes}
             />
           )}
         </div>

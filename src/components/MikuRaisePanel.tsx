@@ -3,11 +3,13 @@
 // 变体);同一时刻两个实例只有可见的那个响应互动事件(见 MikuStage 的可见性静默),
 // 进入本页时 App 会隐藏悬浮球。数值模型在 ../mikuPet;存档经 App 的 onPet 防抖写 /api/settings。
 // 互动增强:投喂飞食动画+咀嚼口型、舞台拖拽摇摆、连击浮标、长按摸头(眯眼+点头)、
-// 时段×状态问候与主动撒娇、连续来访签到、升级撒花、等级解锁互动、成就徽章、接大葱小游戏。
+// 时段×状态问候与主动撒娇、连续来访签到、升级撒花、等级解锁互动、成就任务券
+// (侧栏摘要+浮层,方向B定稿见 miku-badges/direction-approved.md)、接大葱小游戏。
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AppData } from '../types'
 import { todayStr } from '../api'
 import {
+  achievementView,
   applyPet,
   checkAchievements,
   hasUnlock,
@@ -22,6 +24,8 @@ import {
   type MikuPetCounters,
 } from '../mikuPet'
 import LeekGame from './LeekGame'
+import AchievementModal, { AchChip } from './AchievementModal'
+import { IconTicket } from './icons'
 import MikuStage, {
   MIKU_CELEBRATE_EVENT,
   MIKU_COMBO_EVENT,
@@ -44,12 +48,17 @@ interface Props {
   pet: MikuPet
   /** App 提供的统一入口:更新宠物状态并防抖持久化 */
   onPet: (next: MikuPet) => void
-  /** 当前保留动作(与右键菜单同源):null = 默认待机 */
+  /** 当前保留动作(与右键菜单同源):null = 默认待机;手部三选一组 */
   mikuAction: string | null
   /** QQ 人形态是否开启(与右键菜单同源) */
   mikuQQ: boolean
   /** 选择/取消保留动作(App 统一派发,菜单与本栏共享) */
   playMiku: (expression: string | null, talkMs?: number) => void
+  /** 可叠加表情(脸红/圈圈/前倾,参数独立可同时生效) */
+  emoteOn: Record<string, boolean>
+  toggleEmote: (name: string) => void
+  /** 恢复默认:清空可叠加组 + 解除手部三选一 */
+  clearEmotes: () => void
 }
 
 // 舞台尺寸按视口在挂载时定一次(中途旋转/缩放窗口不重建画布,CSS 层面整体等比即可)
@@ -94,19 +103,20 @@ interface FlyingFood {
   dy: number
 }
 
-export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, playMiku }: Props) {
+export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, playMiku, emoteOn, toggleEmote, clearEmotes }: Props) {
   const [size] = useState(pickStageSize)
   const [ready, setReady] = useState(false)
   const [failed, setFailed] = useState(false)
-  // 她说的话(互动反馈/闲置碎碎念/系统播报共用),5 秒自动消失
-  const [bubble, setBubble] = useState<{ id: number; text: string } | null>(null)
+  // 她说的话(互动反馈/闲置碎碎念/系统播报共用),5 秒自动消失;ach = 句首要带的成就章
+  const [bubble, setBubble] = useState<{ id: number; text: string; ach?: { key: keyof MikuPetCounters; tier: number } } | null>(null)
   const bubbleTimer = useRef<number | null>(null)
   const bubbleRef = useRef<string | null>(null)
-  // 连点连击浮标(x2…x5)/ 飞行中的食物 / 升级撒花 / 小游戏开关
+  // 连点连击浮标(x2…x5)/ 飞行中的食物 / 升级撒花 / 小游戏开关 / 成就浮层
   const [combo, setCombo] = useState<{ id: number; count: number; done: boolean } | null>(null)
   const [foods, setFoods] = useState<FlyingFood[]>([])
   const [confettiAt, setConfettiAt] = useState(0)
   const [gameOpen, setGameOpen] = useState(false)
+  const [achOpen, setAchOpen] = useState(false)
   // 移动端侧栏的分组 Tab(桌面两栏并排展示,Tab 条由 CSS 隐藏)
   const [mobileTab, setMobileTab] = useState<'actions' | 'emotes'>('actions')
   const comboTimer = useRef<number | null>(null)
@@ -134,9 +144,9 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, p
   // 小游戏冷却(会话内 3 分钟)
   const gameCdRef = useRef(0)
 
-  const say = useCallback((text: string) => {
+  const say = useCallback((text: string, ach?: { key: keyof MikuPetCounters; tier: number }) => {
     bubbleRef.current = text
-    setBubble({ id: Date.now() + Math.random(), text })
+    setBubble({ id: Date.now() + Math.random(), text, ach })
     if (bubbleTimer.current !== null) window.clearTimeout(bubbleTimer.current)
     bubbleTimer.current = window.setTimeout(() => {
       bubbleRef.current = null
@@ -185,15 +195,28 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, p
   }
 
   // 成就检查:基于「本次结算后的存档」判断(同步链路里 petRef 要等重渲染才更新,
-  // 读 ref 会拿到旧值),新达成 → 亲密度 +5 + 播报(延迟 1.2s,别盖掉升级/动作台词)
+  // 读 ref 会拿到旧值),新达成 → 亲密度 +5 + 播报(延迟 1.2s,别盖掉升级/动作台词)。
+  // 奖励 +5 也可能跨级:升级链路(撒花/称号播报/解锁提示)与 settle 共用一套,不能静默。
   const checkAch = (base: MikuPet) => {
     const fresh = checkAchievements(base)
     if (fresh.length === 0) return
+    const levelBefore = petLevel(base.bond).level
     let next = applyPet(base, { bond: 5 })
     next = { ...next, achievements: { ...next.achievements } }
     for (const a of fresh) next.achievements![a.key] = a.tier
     onPet(next)
-    window.setTimeout(() => say(`${fresh[0].emoji} 成就达成「${fresh[0].name}」,亲密度 +5!`), 1200)
+    const levelAfter = petLevel(next.bond).level
+    const first = fresh[0]
+    const achLine = `成就达成「${first.name}」,亲密度 +5!`
+    if (levelAfter > levelBefore) {
+      fireConfetti()
+      window.dispatchEvent(new CustomEvent(MIKU_CHEER_EVENT))
+      say(`${achLine}亲密度升级啦,现在是「${petTitle(levelAfter)}」了`, { key: first.key, tier: first.tier })
+      const unlock = UNLOCKS.find((u) => u.lv === levelAfter)
+      if (unlock) window.setTimeout(() => say(`解锁新互动「${unlock.label}」!快试试吧~`), 3000)
+      return
+    }
+    window.setTimeout(() => say(achLine, { key: first.key, tier: first.tier }), 1200)
   }
 
   // 进页:签到(连续来访加成)+ 每日见面礼 + 时段×状态问候;跨级时撒花播报
@@ -487,6 +510,11 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, p
   const cooling = (key: string) => Math.max(0, Math.ceil(((cdRef.current[key] ?? 0) - now) / 1000))
   const gameCooling = Math.max(0, Math.ceil((gameCdRef.current - now) / 1000))
 
+  // 成就任务券:按当前互动计数实时推导各成就档位(票色与票根章位随之上走)
+  const achRows = achievementView(pet)
+  const achStamped = achRows.reduce((n, r) => n + Math.max(0, r.tier + 1), 0)
+  const achTotal = achRows.reduce((n, r) => n + r.thresholds.length, 0)
+
   type ActionDef = {
     key: string
     label: string
@@ -517,6 +545,10 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, p
             <i>/</i>养成
           </h2>
           <span className="raise-head-badges">
+            <button className="raise-ach-pill" onClick={() => setAchOpen(true)} title="成就任务券">
+              <IconTicket />
+              {achStamped}/{achTotal}
+            </button>
             {(pet.visitStreak ?? 0) >= 2 && (
               <span className="raise-streak" title={`连续来访 ${pet.visitStreak} 天`}>
                 🔥 {pet.visitStreak} 天
@@ -531,6 +563,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, p
         <div className="raise-stage-wrap" ref={stageWrapRef}>
           {bubble && (
             <div key={bubble.id} className="raise-bubble">
+              {bubble.ach && <AchChip k={bubble.ach.key} tier={bubble.ach.tier} />}
               {bubble.text}
             </div>
           )}
@@ -682,19 +715,27 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, p
           <div className="raise-side-title">动作</div>
           <div className="raise-emotes">
             <button
-              className={`raise-emote${mikuAction === null && !mikuQQ ? ' on' : ''}`}
-              onClick={() => playMiku(null)}
-              title="取消保留动作,回到默认待机"
+              className={`raise-emote${mikuAction === null && !Object.values(emoteOn).some(Boolean) ? ' on' : ''}`}
+              onClick={clearEmotes}
+              title="清空可叠加表情并解除保留动作"
             >
               默认
             </button>
+            {/* 脸红/圈圈/前倾参数互不冲突,可叠加;比心/唱歌/拿葱舞共用手部骨架,三选一 */}
+            {(['脸红', '圈圈', '前倾'] as const).map((name) => (
+              <button
+                key={name}
+                className={`raise-emote${emoteOn[name] ? ' on' : ''}`}
+                onClick={() => toggleEmote(name)}
+                title="可与其他动作同时生效"
+              >
+                {name}
+              </button>
+            ))}
             {(
               [
                 ['比心', undefined],
-                ['脸红', undefined],
-                ['圈圈', undefined],
                 ['唱歌', 3200],
-                ['前倾', undefined],
                 ['拿葱舞', undefined],
               ] as const
             ).map(([name, talkMs]) => (
@@ -715,8 +756,27 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, p
             </button>
           </div>
           </div>
+          <button className="raise-ach-strip" onClick={() => setAchOpen(true)} title="成就任务券:点开查看全部">
+            {achRows.map((r) => (
+              <AchChip key={r.key} k={r.key} tier={r.tier} />
+            ))}
+            <span className="raise-ach-strip-cnt">
+              {achStamped}/{achTotal}
+            </span>
+            <svg width="7" height="11" viewBox="0 0 7 11" aria-hidden="true">
+              <path
+                d="M1.2 1.3 5.7 5.5 1.2 9.7"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
         </aside>
       </section>
+      {achOpen && <AchievementModal pet={pet} onClose={() => setAchOpen(false)} />}
     </div>
   )
 }

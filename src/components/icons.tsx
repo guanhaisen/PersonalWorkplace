@@ -171,3 +171,86 @@ export function IconGitHub() {
     </svg>
   )
 }
+
+// ---------- Miku 成就印章图案(24 网格 stroke 2,印章式单色 currentColor) ----------
+// 方向 B「任务旅行券」定稿图案,设计过程见 miku-badges/(动森哩数票券迁移)。
+// 尺寸远小于 24 时仍需可辨,所以线条比应用 16px 图标粗一档。
+
+/** 摸摸大师:摸头手 + 头顶弧线 */
+export function AchIconPat({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M4.5 16.2A7.5 7.5 0 0 1 19.5 16.2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <rect x="7.9" y="1.9" width="8.2" height="6.9" rx="2.6" stroke="currentColor" strokeWidth="2" />
+      <path d="M10.8 1.9V4.6M13.9 1.9V4.6" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+/** 饲养员:碗 + 食物 */
+export function AchIconFeed({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M3.5 11.6H20.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M5.2 11.6A6.8 6.8 0 0 0 18.8 11.6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <circle cx="8.7" cy="7.9" r="1.5" fill="currentColor" />
+      <circle cx="12" cy="6.2" r="1.5" fill="currentColor" />
+      <circle cx="15.3" cy="7.9" r="1.5" fill="currentColor" />
+    </svg>
+  )
+}
+
+/** 玩伴:四芒星(一起玩的星光) */
+export function AchIconPlay({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M11 2.6C11.9 8 14.5 10.6 19.9 11.5 14.5 12.4 11.9 15 11 20.4 10.1 15 7.5 12.4 2.1 11.5 7.5 10.6 10.1 8 11 2.6Z"
+        fill="currentColor"
+      />
+      <path
+        d="M18.8 3.5C19.1 5.1 19.9 5.9 21.5 6.2 19.9 6.5 19.1 7.3 18.8 8.9 18.5 7.3 17.7 6.5 16.1 6.2 17.7 5.9 18.5 5.1 18.8 3.5Z"
+        fill="currentColor"
+      />
+    </svg>
+  )
+}
+
+/** 头号歌迷:麦克风 */
+export function AchIconSing({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="9.1" y="2.6" width="5.8" height="9.6" rx="2.9" stroke="currentColor" strokeWidth="2" />
+      <path d="M9.1 7.2H14.9" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      <path d="M6.2 10.4V11.6A5.8 5.8 0 0 0 17.8 11.6V10.4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M12 17.4V20M8.8 20H15.2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+/** 接葱达人:篮 + 葱 */
+export function AchIconGame({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M11.9 14.6 16.7 5.6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M16.7 5.6 19.3 3.1M16.7 5.6 20.2 4.9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M4.6 13.6H19.4L17.5 20.5H6.5Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+      <path d="M9.8 13.6 9.1 20.5M14.2 13.6 14.9 20.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+/** 任务券:标题栏成就计数 pill 用的小票 */
+export function IconTicket({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V5a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <path d="M13 5v2M13 11v2M13 17v2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  )
+}

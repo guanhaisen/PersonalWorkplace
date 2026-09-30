@@ -80,6 +80,16 @@ export const MIKU_COMBO_EVENT = 'miku:combo'
 export const MIKU_CHEER_EVENT = 'miku:cheer'
 /** 点头回应(无 detail):头部 ParamAngleY 短促两摆 */
 export const MIKU_NOD_EVENT = 'miku:nod'
+/**
+ * 可叠加表情开关(detail {name} 切换 / {clearA} 全清):脸红/圈圈/前倾各占独立参数,
+ * 可同时生效;比心/唱歌/葱/拿葱舞共用手部骨架(exp3.json 里互相清零)保持三选一
+ */
+export const MIKU_EMOTE_EVENT = 'miku:emote'
+const EMOTE_PARAMS: Record<string, string[]> = {
+  脸红: ['Param130'],
+  圈圈: ['Param125'],
+  前倾: ['Param132'],
+}
 /** 眯眼害羞(detail {ms}):EyeL/R_Squint 保持一段时间 */
 export const MIKU_SQUINT_EVENT = 'miku:squint'
 
@@ -220,10 +230,14 @@ function MikuStageInner(
   // PIXI Application 引用:IntersectionObserver 据此暂停/恢复渲染(离屏不烧 GPU)
   const appRef = useRef<PIXI.Application | null>(null)
   const onScreenRef = useRef(true)
+  // 可叠加表情的激活集合:每帧在 update 尾部写各自的专属参数(互不冲突)
+  const emoteOnRef = useRef<Set<string>>(new Set())
   // 视觉居中修正量(px):可见形象中心相对画布中线的偏移。普通形态出场 800ms 后
   // 实测一次;QQ 形态轮廓不同,首次变形完成后再实测一次并缓存,之后切换直接复用
   const normalOffsetRef = useRef(0)
   const qqOffsetRef = useRef<number | null>(null)
+  // page 变体的周期居中自检定时器,卸载时清理
+  const centeringTimerRef = useRef<number | null>(null)
   // 舞台是否可见:挂在 display:none 子树(如切走后的养成页/隐藏的悬浮球)里时应
   // 完全静默——不响应 window 互动事件、不做闲置彩蛋,否则看不见的她会在背后偷偷演
   const stageVisible = () => !!hostRef.current && hostRef.current.getClientRects().length > 0
@@ -241,8 +255,14 @@ function MikuStageInner(
       if (!gl) return null
       const bw = gl.drawingBufferWidth
       const bh = gl.drawingBufferHeight
+      // readPixels 读的是「当前绑定的 FBO」:Live2D 的遮罩/滤镜 pass 可能把非默认
+      // FBO 留在 GL 状态里,不绑回默认帧缓冲就会读到 stale 纹理(全零或错位内容),
+      // 三帧采样还会「高度一致」地通过校验,把垃圾修正锁死——必须显式绑回再读
+      const prevFbo = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null)
       const px = new Uint8Array(bw * bh * 4)
       gl.readPixels(0, 0, bw, bh, gl.RGBA, gl.UNSIGNED_BYTE, px)
+      gl.bindFramebuffer(gl.FRAMEBUFFER, prevFbo)
       let minX = -1
       let maxX = -1
       let minGy = -1
@@ -479,6 +499,9 @@ function MikuStageInner(
         // 垃圾数据放弃(实测本模型真实修正约 16%,半帧垃圾在 ±35% 量级)——
         // 钳制上限既要放行真实修正,又绝不能把人推出画布
         if (variant === 'page') {
+          // 三帧一致性采样:两两差 ≤8px 视为稳定,取中位数;不一致重测一轮。
+          // 整轮失败(面板被节流 RAF 全停/连续撞上半帧等)按 2s 退避重试——
+          // 面板回到屏幕后 RAF 恢复,下一轮即可完成,居中不会因时序被永久放弃
           const applyCentering = (attempt: number) => {
             requestAnimationFrame(() => {
               if (disposed || !model) return
@@ -499,6 +522,7 @@ function MikuStageInner(
                   }
                   const dx = sorted[1]
                   if (Math.abs(dx) < 0.5 || Math.abs(dx) > width * 0.2) return
+                  if (normalOffsetRef.current !== 0) return // 后续轮次兜底,首轮成功即不再重复修正
                   normalOffsetRef.current = dx
                   model.position.x += dx
                   basePosRef.current.x += dx
@@ -508,7 +532,62 @@ function MikuStageInner(
               next()
             })
           }
-          window.setTimeout(() => applyCentering(0), 800)
+          const scheduleCentering = (attempt: number) => {
+            window.setTimeout(() => {
+              if (disposed || modelRef.current !== model) return
+              applyCentering(attempt)
+            }, 800 + attempt * 2000)
+          }
+          scheduleCentering(0)
+          scheduleCentering(1)
+          scheduleCentering(2)
+          // 周期自检:一次性修正若在采样窗口撞上瞬态(动作摆动/半帧),反向垃圾
+          // 修正会被 normalOffsetRef 锁死整个会话(实测出现过残差 +94px、模型右缘
+          // 裁切,刷新才恢复)。这里每 4s 复测自愈:三帧两两一致(≤8px,滤掉动作
+          // 瞬态)且残差超过呼吸/发丝慢摆幅度(实测峰值 ±10px)才补;补偿叠加进
+          // 「当前形态」的偏移缓存,经 basePosTarget 平滑滑入,量级钳制与首次一致。
+          // 拖拽/舞蹈等主动摆动中不测,避免把摆动当成偏移
+          let verifying = false
+          centeringTimerRef.current = window.setInterval(() => {
+            if (verifying || disposed || document.hidden || !stageVisible()) return
+            if (!readyRef.current || draggingRef.current || pinnedRef.current === DANCE_PIN) return
+            if (qqTargetRef.current === 1 && qqOffsetRef.current == null) return
+            verifying = true
+            const samples: number[] = []
+            const tick = () => {
+              if (disposed) {
+                verifying = false
+                return
+              }
+              const mm = modelRef.current
+              // 位置被外部改动(偏离 basePos 影子,正常管线 position 每帧由 basePos
+              // 驱动)时先归位再测:残差可能来自「位置漂移」而非「目标错误」,
+              // 不归位会把两种误差叠在一起修正,造成来回过冲
+              if (mm && Math.abs(mm.position.x - basePosRef.current.x) > 1) {
+                mm.position.x = basePosRef.current.x
+              }
+              const dx = measureCenterDx()
+              if (dx !== null) samples.push(dx)
+              if (samples.length < 3) {
+                window.setTimeout(tick, 350)
+                return
+              }
+              verifying = false
+              const sorted = [...samples].sort((a, b) => a - b)
+              if (sorted[2] - sorted[0] > 8) return
+              const fix = sorted[1]
+              if (Math.abs(fix) < 16) return
+              // 自检的 fix 是「往回纠」,量级交给结果约束:修正后的目标不允许偏离
+              // 画布中线超过 35%(真实居中修正约 14%);沿用首次的 20% fix 钳制会
+              // 拒收大残差(实测污染态残差 94px ≈ 25.5%),自检反而救不回来
+              const targetX = basePosTargetRef.current.x + fix
+              if (Math.abs(targetX - width / 2) > width * 0.35) return
+              if (qqTargetRef.current === 1) qqOffsetRef.current = (qqOffsetRef.current ?? 0) + fix
+              else normalOffsetRef.current += fix
+              basePosTargetRef.current = { ...basePosTargetRef.current, x: targetX }
+            }
+            tick()
+          }, 4000)
         }
         // 说话口型与夜晚困困眼皮必须在眨眼/表情/动作各自写完参数之后再处理,
         // 所以挂到 internalModel.update 尾部(写在外层 ticker 会与眨眼竞态来回跳)。
@@ -566,6 +645,13 @@ function MikuStageInner(
             squintWasRef.current = false
             core.setParameterValueById('EyeL_Squint', 0)
             core.setParameterValueById('EyeR_Squint', 0)
+          }
+          // 可叠加表情层:每帧写激活表情的专属参数(只在尾部写,压过表情管理器
+          // 的同参写入;关闭时不写,参数由关闭瞬间的补 0 归零)
+          for (const name of emoteOnRef.current) {
+            for (const id of EMOTE_PARAMS[name] ?? []) {
+              core.setParameterValueById(id, 1)
+            }
           }
         }
         // 每帧特效:拖动/挠痒痒/思考的摆动 + 弹跳弹簧(摆动互斥,弹跳独立)
@@ -653,6 +739,10 @@ function MikuStageInner(
       readyRef.current = false
       modelRef.current = null
       appRef.current = null
+      if (centeringTimerRef.current !== null) {
+        window.clearInterval(centeringTimerRef.current)
+        centeringTimerRef.current = null
+      }
       delete (window as unknown as Record<string, unknown>).__miku
       delete (window as unknown as Record<string, unknown>).__mikuDebug
       window.clearTimeout(expressionTimerRef.current)
@@ -828,6 +918,33 @@ function MikuStageInner(
       talkUntilRef.current = performance.now() + Math.min(Math.max(ms ?? 2200, 1200), 5000)
       if (readyRef.current) bounceAtRef.current = performance.now()
     }
+    // 可叠加表情开关:激活即每帧写 1,关闭瞬间补 0(参数跨帧持久,不补会停在 1)
+    const writeEmoteParams = (name: string, value: number) => {
+      try {
+        const core = modelRef.current?.internalModel.coreModel as ParamWriter | null
+        for (const id of EMOTE_PARAMS[name] ?? []) core?.setParameterValueById(id, value)
+      } catch {
+        // 模型可能在写入前被销毁,忽略
+      }
+    }
+    const onEmote = (e: Event) => {
+      if (!stageVisible()) return
+      const detail = (e as CustomEvent).detail as { name?: string; clearA?: boolean } | undefined
+      if (detail?.clearA) {
+        for (const name of emoteOnRef.current) writeEmoteParams(name, 0)
+        emoteOnRef.current.clear()
+        return
+      }
+      const name = detail?.name
+      if (!name || !EMOTE_PARAMS[name]) return
+      if (emoteOnRef.current.has(name)) {
+        emoteOnRef.current.delete(name)
+        writeEmoteParams(name, 0)
+      } else {
+        emoteOnRef.current.add(name)
+        writeEmoteParams(name, 1)
+      }
+    }
     const onCelebrate = () => {
       if (!stageVisible()) return
       const now = performance.now()
@@ -864,6 +981,7 @@ function MikuStageInner(
     window.addEventListener(MIKU_CHEER_EVENT, onCheer)
     window.addEventListener(MIKU_NOD_EVENT, onNod)
     window.addEventListener(MIKU_SQUINT_EVENT, onSquint)
+    window.addEventListener(MIKU_EMOTE_EVENT, onEmote)
     return () => {
       window.removeEventListener(MIKU_TAP_EVENT, onTap)
       window.removeEventListener(MIKU_DRAG_START_EVENT, onDragStart)
@@ -877,6 +995,7 @@ function MikuStageInner(
       window.removeEventListener(MIKU_CHEER_EVENT, onCheer)
       window.removeEventListener(MIKU_NOD_EVENT, onNod)
       window.removeEventListener(MIKU_SQUINT_EVENT, onSquint)
+      window.removeEventListener(MIKU_EMOTE_EVENT, onEmote)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

@@ -16,6 +16,9 @@
   --accent-deep: #0b5d56;
   --accent-tint: #e7f1ee;
   --accent-soft: #9dc2bb;
+  /* 成就任务券票色(方向B定稿,见 miku-badges/):t1 票面米色 / t3 青档 */
+  --cream: #f7f1de;
+  --teal-2: #cfe5df;
   --blue: #2f6fd8;
   --green: #3e9c62;
   --red: #c24a38;
@@ -4223,6 +4226,9 @@ kbd {
   z-index: 3;
   width: max-content;
   max-width: min(300px, 90%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -4716,4 +4722,394 @@ kbd {
   text-align: center;
   font-size: 12px;
   color: var(--text-3);
+}
+
+/* ---------- 成就徽章 · 方向B「任务旅行券」(定稿:miku-badges/direction-approved.md) ----------
+   票券即徽章:米白票面 + 齿孔撕线 + 半圆打口,印章式单色图案;档位 = 票根 4 章位
+   (实心绿章=已达成 / 朱红虚圈=下一枚 / 灰虚圈=未到)+ 票色 白→米→浅青→深青 双通道 */
+
+/* 票面色阶:图案与边缘随档位染色,t4 满章反白 */
+.ach-chip,
+.ach-tk {
+  --ach-face: var(--card);
+  --ach-icon: var(--muted);
+  --ach-edge: var(--line);
+  --ach-stub: var(--line);
+}
+
+.ach-t1 {
+  --ach-face: var(--cream);
+  --ach-icon: var(--accent-deep);
+  --ach-stub: #d8d2ba;
+}
+
+.ach-t2 {
+  --ach-face: var(--accent-tint);
+  --ach-icon: var(--accent-deep);
+  --ach-stub: #c6dad3;
+}
+
+.ach-t3 {
+  --ach-face: var(--teal-2);
+  --ach-icon: var(--accent-deep);
+  --ach-stub: #a9c8bf;
+}
+
+.ach-t4 {
+  --ach-face: var(--accent-deep);
+  --ach-icon: var(--cream);
+  --ach-edge: var(--accent-deep);
+  --ach-stub: rgba(247, 241, 222, 0.55);
+}
+
+/* 迷你章 chip(侧栏摘要 / 播报气泡句首) */
+.ach-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border-radius: 5px;
+  border: 1px solid var(--ach-edge);
+  background: var(--ach-face);
+  color: var(--ach-icon);
+}
+
+.ach-chip svg {
+  display: block;
+}
+
+/* 完整任务券(浮层行首):票面 + 中缝撕线票根 */
+.ach-tk {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  flex: none;
+  width: 46px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--ach-edge);
+  background: var(--ach-face);
+  color: var(--ach-icon);
+  background-image: repeating-linear-gradient(0deg, transparent 0 3px, rgba(29, 38, 34, 0.03) 3px 4px);
+}
+
+.ach-tk-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.ach-tk-stub {
+  position: relative;
+  width: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-left: 1.5px dashed var(--ach-stub);
+}
+
+/* 撕线两端的半圆打口(吃进周围白卡底色) */
+.ach-tk-stub::before,
+.ach-tk-stub::after {
+  content: '';
+  position: absolute;
+  left: -5.5px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--card);
+  border: 1px solid var(--ach-edge);
+}
+
+.ach-tk-stub::before {
+  top: -5px;
+}
+
+.ach-tk-stub::after {
+  bottom: -5px;
+}
+
+/* 章位记号 */
+.ach-seals {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ach-seals i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+
+.ach-seals i.d {
+  background: var(--accent-deep);
+}
+
+.ach-seals i.n {
+  border: 1.3px dashed var(--red);
+}
+
+.ach-seals i.w {
+  border: 1.3px dashed var(--line);
+}
+
+/* 未盖章:空白虚线券,图案灰化待印,外圈虚线印位 */
+.ach-t0 {
+  border-style: dashed;
+}
+
+.ach-t0 .ach-tk-main::after {
+  content: '';
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  border: 1.5px dashed var(--line);
+  border-radius: 50%;
+}
+
+.ach-t0 .ach-tk-main svg {
+  opacity: 0.75;
+}
+
+/* 标题栏计数 pill(移动端唯一入口,桌面与摘要条并存) */
+.raise-ach-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 9px;
+  background: var(--card);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.raise-ach-pill:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* 侧栏底部摘要条(桌面):各成就当前档票色 chips + 计数,整行可点 */
+.raise-ach-strip {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 7px 9px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.15s ease;
+}
+
+.raise-ach-strip:hover {
+  border-color: var(--accent);
+}
+
+.raise-ach-strip-cnt {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--accent-deep);
+}
+
+.raise-ach-strip > svg {
+  color: var(--muted);
+  flex: none;
+}
+
+/* 成就浮层 */
+.raise-ach-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 52;
+  background: rgba(29, 38, 34, 0.32);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.raise-ach-card {
+  width: 520px;
+  max-width: 100%;
+  max-height: min(560px, 100%);
+  overflow-y: auto;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 16px;
+  box-shadow: 0 18px 48px rgba(16, 24, 40, 0.18);
+}
+
+.raise-ach-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.raise-ach-head b {
+  color: var(--accent-deep);
+}
+
+.raise-ach-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 42px;
+}
+
+.raise-ach-row + .raise-ach-row {
+  border-top: 1px solid var(--line-soft);
+}
+
+.raise-ach-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.raise-ach-meta b {
+  display: block;
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.raise-ach-meta i {
+  display: block;
+  font-family: var(--mono);
+  font-style: normal;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.raise-ach-meta i.warn {
+  color: var(--red);
+}
+
+.raise-ach-pcol {
+  width: 186px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-end;
+}
+
+.raise-ach-bar {
+  position: relative;
+  width: 172px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--accent-tint);
+}
+
+.raise-ach-bar b {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 3px;
+  background: var(--accent-deep);
+}
+
+.raise-ach-bar.lock {
+  background: repeating-linear-gradient(90deg, var(--line) 0 4px, transparent 4px 8px);
+}
+
+.raise-ach-bar.lock b {
+  background: var(--muted);
+}
+
+/* 档位刻痕:已越过的前几档在条上留白口 */
+.raise-ach-bar s {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 1.5px;
+  text-decoration: none;
+  background: var(--card);
+}
+
+/* 条尾朱红虚圈永远指向「下一章」;满章行隐藏 */
+.raise-ach-bar::after {
+  content: '';
+  position: absolute;
+  right: -2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 11px;
+  height: 11px;
+  border: 1.5px dashed var(--red);
+  border-radius: 50%;
+  background: var(--card);
+}
+
+.raise-ach-bar.done::after {
+  display: none;
+}
+
+.raise-ach-num {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1;
+  color: var(--muted);
+}
+
+/* 播报气泡句首带章 */
+.raise-bubble .ach-chip {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+}
+
+/* ---------- 成就任务券 · 移动端(必须晚于上面的基础规则,同权重后者胜) ---------- */
+@media (max-width: 900px) {
+  /* 一屏:侧栏摘要条不出现,成就走标题栏 pill 入口 */
+  .raise-ach-strip {
+    display: none;
+  }
+
+  .raise-ach-overlay {
+    padding: 14px;
+  }
+
+  .raise-ach-row {
+    height: auto;
+    flex-wrap: wrap;
+    padding: 9px 0;
+    row-gap: 7px;
+  }
+
+  .raise-ach-pcol {
+    width: 100%;
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .raise-ach-bar {
+    flex: 1;
+    width: auto;
+    margin-right: 10px;
+  }
 }

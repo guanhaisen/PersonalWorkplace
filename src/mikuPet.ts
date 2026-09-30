@@ -150,24 +150,24 @@ export function registerVisit(p: MikuPet, today = todayStr()): { pet: MikuPet; s
 
 // ---------- 成就:互动计数里程碑 ----------
 
+// 图案在 components/icons.tsx 的 AchIcon*(方向 B「任务旅行券」印章式 SVG,不用 emoji)
 export const ACHIEVEMENT_META: {
   key: keyof MikuPetCounters
-  emoji: string
   name: string
   thresholds: number[]
 }[] = [
-  { key: 'pat', emoji: '🤚', name: '摸摸大师', thresholds: [10, 50, 100, 300] },
-  { key: 'feed', emoji: '🍚', name: '饲养员', thresholds: [10, 50, 100, 300] },
-  { key: 'play', emoji: '🎪', name: '玩伴', thresholds: [10, 50, 100, 300] },
-  { key: 'sing', emoji: '🎤', name: '头号歌迷', thresholds: [10, 50, 100, 300] },
-  { key: 'game', emoji: '🧺', name: '接葱达人', thresholds: [10, 30, 80, 150] },
+  { key: 'pat', name: '摸摸大师', thresholds: [10, 50, 100, 300] },
+  { key: 'feed', name: '饲养员', thresholds: [10, 50, 100, 300] },
+  { key: 'play', name: '玩伴', thresholds: [10, 50, 100, 300] },
+  { key: 'sing', name: '头号歌迷', thresholds: [10, 50, 100, 300] },
+  { key: 'game', name: '接葱达人', thresholds: [10, 30, 80, 150] },
 ]
 
 /** 对照阈值检查新达成的成就档位(仅返回尚未记录的),达成即固化进存档 */
-export function checkAchievements(p: MikuPet): { key: string; tier: number; name: string; emoji: string; next: number }[] {
+export function checkAchievements(p: MikuPet): { key: keyof MikuPetCounters; tier: number; name: string; next: number }[] {
   const counters = p.counters ?? { pat: 0, feed: 0, play: 0, sing: 0, game: 0 }
   const done = p.achievements ?? {}
-  const out: { key: string; tier: number; name: string; emoji: string; next: number }[] = []
+  const out: { key: keyof MikuPetCounters; tier: number; name: string; next: number }[] = []
   for (const meta of ACHIEVEMENT_META) {
     const count = counters[meta.key]
     let tier = -1
@@ -180,7 +180,6 @@ export function checkAchievements(p: MikuPet): { key: string; tier: number; name
         key: meta.key,
         tier,
         name: meta.name,
-        emoji: meta.emoji,
         next: meta.thresholds[tier + 1] ?? meta.thresholds[tier],
       })
     }
