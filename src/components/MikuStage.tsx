@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 'react'
 import * as PIXI from 'pixi.js'
 import type { Live2DModel as Live2DModelInstance } from 'pixi-live2d-display/cubism4'
 
@@ -154,16 +154,25 @@ interface Props {
   variant?: 'fab' | 'page'
 }
 
-export default function MikuStage({
-  onReady,
-  onFailed,
-  onQQChange,
-  eyeFollow = true,
-  idleEnabled = true,
-  width = STAGE_W,
-  height = STAGE_H,
-  variant = 'fab',
-}: Props) {
+/** 通过 ref 暴露给外层的能力:查询当前形态的嘴部锚点(画布内逻辑坐标) */
+export type MikuStageApi = {
+  /** QQ 形态时返回 Q 版嘴部位置,普通形态返回站姿嘴部位置;未就绪返回 null */
+  getMouthAnchor: () => { x: number; y: number } | null
+}
+
+function MikuStageInner(
+  {
+    onReady,
+    onFailed,
+    onQQChange,
+    eyeFollow = true,
+    idleEnabled = true,
+    width = STAGE_W,
+    height = STAGE_H,
+    variant = 'fab',
+  }: Props,
+  ref: React.Ref<MikuStageApi>,
+) {
   const hostRef = useRef<HTMLDivElement>(null)
   const modelRef = useRef<Live2DModelInstance | null>(null)
   const readyRef = useRef(false)
@@ -211,9 +220,83 @@ export default function MikuStage({
   // PIXI Application 引用:IntersectionObserver 据此暂停/恢复渲染(离屏不烧 GPU)
   const appRef = useRef<PIXI.Application | null>(null)
   const onScreenRef = useRef(true)
+  // 视觉居中修正量(px):可见形象中心相对画布中线的偏移。普通形态出场 800ms 后
+  // 实测一次;QQ 形态轮廓不同,首次变形完成后再实测一次并缓存,之后切换直接复用
+  const normalOffsetRef = useRef(0)
+  const qqOffsetRef = useRef<number | null>(null)
   // 舞台是否可见:挂在 display:none 子树(如切走后的养成页/隐藏的悬浮球)里时应
   // 完全静默——不响应 window 互动事件、不做闲置彩蛋,否则看不见的她会在背后偷偷演
   const stageVisible = () => !!hostRef.current && hostRef.current.getClientRects().length > 0
+
+  // 回读当前画布帧,统计「不透明像素」的包围盒(设备像素,GL 坐标系 y 向上)。
+  // Live2D 的 anchor 居中按全部网格取中,已关闭的水印、未启用的 QQ 形态部件等
+  // 不可见网格会把边界撑歪,肉眼可见的身体因此偏在一侧;需要 PIXI 开
+  // preserveDrawingBuffer 才读得到像素。失败返回 null
+  const scanSilhouette = useCallback((): { minX: number; maxX: number; minY: number; maxY: number } | null => {
+    try {
+      const app = appRef.current
+      const cv = app?.view as HTMLCanvasElement | undefined
+      if (!app || !cv) return null
+      const gl = (cv.getContext('webgl2') || cv.getContext('webgl')) as WebGLRenderingContext | null
+      if (!gl) return null
+      const bw = gl.drawingBufferWidth
+      const bh = gl.drawingBufferHeight
+      const px = new Uint8Array(bw * bh * 4)
+      gl.readPixels(0, 0, bw, bh, gl.RGBA, gl.UNSIGNED_BYTE, px)
+      let minX = -1
+      let maxX = -1
+      let minGy = -1
+      let maxGy = -1
+      for (let x = 0; x < bw; x += 2) {
+        for (let y = 0; y < bh; y += 4) {
+          if (px[(y * bw + x) * 4 + 3] > 10) {
+            if (minX === -1) minX = x
+            maxX = x
+            if (minGy === -1 || y < minGy) minGy = y
+            if (maxGy === -1 || y > maxGy) maxGy = y
+            break
+          }
+        }
+      }
+      if (minX < 0 || maxX <= minX) return null
+      return { minX, maxX, minY: minGy, maxY: maxGy }
+    } catch {
+      return null
+    }
+  }, [])
+
+  // 回读当前画布帧,返回把「不透明像素轮廓」移到画布中线所需的 x 偏移(逻辑 px)。
+  // 失败返回 null,调用方保持原状
+  const measureCenterDx = useCallback((): number | null => {
+    const app = appRef.current
+    if (!app) return null
+    const sil = scanSilhouette()
+    if (!sil) return null
+    const dx = app.renderer.width / 2 - (sil.minX + sil.maxX) / 2 / app.renderer.resolution
+    return Math.abs(dx) < 0.5 ? 0 : dx
+  }, [scanSilhouette])
+
+  // 外层(养成页喂食动画)查询当前形态嘴部在画布内的位置:
+  // 实时回读轮廓包围盒,普通形态嘴约在身形 23% 高度,Q 版(大头)约 38%
+  useImperativeHandle(
+    ref,
+    () => ({
+      getMouthAnchor: () => {
+        if (!readyRef.current || !stageVisible()) return null
+        const app = appRef.current
+        if (!app) return null
+        const sil = scanSilhouette()
+        if (!sil) return null
+        const res = app.renderer.resolution
+        const top = (app.renderer.height * res - sil.maxY) / res
+        const bottom = (app.renderer.height * res - sil.minY) / res
+        const x = (sil.minX + sil.maxX) / 2 / res
+        const y = top + (bottom - top) * (qqTargetRef.current === 1 ? 0.38 : 0.23)
+        return { x, y }
+      },
+    }),
+    [scanSilhouette],
+  )
 
   // 临时表情结束后的复原:有保留动作则回到她(舞蹈保留回葱表情),否则完全复位
   const restoreExpressionSafe = () => {
@@ -363,6 +446,8 @@ export default function MikuStage({
           antialias: true,
           resolution: Math.min(window.devicePixelRatio || 1, 2),
           autoDensity: true,
+          // 视觉居中回读像素需要:WebGL 默认每帧清空绘图缓冲,不保留则 readPixels 全空
+          preserveDrawingBuffer: true,
         })
         if (disposed || !hostRef.current) return
         appRef.current = app
@@ -387,6 +472,44 @@ export default function MikuStage({
         // (水印.exp3.json 同款设置),已实测该参数无其他作用且跨帧保持
         ;(model.internalModel.coreModel as ParamWriter).setParameterValueById('Param137', 1)
         app.stage.addChild(model)
+        // 视觉居中:对 page 大舞台,出场 800ms(等头发物理稳定)后按实测偏移把
+        // 可见形象对到画布中线;悬浮球构图已调好不做此修正。
+        // 回读有撞上「渲染中途半帧」的风险(左半已画右半未画,轮廓中心被算歪),
+        // 因此三帧采样要求两两一致才取中位数;修正量超过画布宽 20% 一律视为
+        // 垃圾数据放弃(实测本模型真实修正约 16%,半帧垃圾在 ±35% 量级)——
+        // 钳制上限既要放行真实修正,又绝不能把人推出画布
+        if (variant === 'page') {
+          const applyCentering = (attempt: number) => {
+            requestAnimationFrame(() => {
+              if (disposed || !model) return
+              const samples: number[] = []
+              const next = () => {
+                requestAnimationFrame(() => {
+                  if (disposed || !model) return
+                  const sample = measureCenterDx()
+                  if (sample !== null) samples.push(sample)
+                  if (samples.length < 3) {
+                    window.setTimeout(next, 160)
+                    return
+                  }
+                  const sorted = [...samples].sort((a, b) => a - b)
+                  if (sorted[2] - sorted[0] > 8 && attempt < 2) {
+                    applyCentering(attempt + 1) // 三帧不一致:多半撞上动作/半帧,重测一轮
+                    return
+                  }
+                  const dx = sorted[1]
+                  if (Math.abs(dx) < 0.5 || Math.abs(dx) > width * 0.2) return
+                  normalOffsetRef.current = dx
+                  model.position.x += dx
+                  basePosRef.current.x += dx
+                  basePosTargetRef.current.x += dx
+                })
+              }
+              next()
+            })
+          }
+          window.setTimeout(() => applyCentering(0), 800)
+        }
         // 说话口型与夜晚困困眼皮必须在眨眼/表情/动作各自写完参数之后再处理,
         // 所以挂到 internalModel.update 尾部(写在外层 ticker 会与眨眼竞态来回跳)。
         // 参数不存在时 setParameterValueById 是无害的空写,对应效果自动退化
@@ -535,7 +658,12 @@ export default function MikuStage({
       window.clearTimeout(expressionTimerRef.current)
       window.clearTimeout(danceLoopTimerRef.current)
       model?.destroy({ children: true, texture: true, baseTexture: true })
+      // destroy(false) 不摘除 view:不把画布从 DOM 移走的话,StrictMode 双挂载与
+      // HMR 重挂载都会在宿主里留下一个 context 已丢失的死画布,既漏内存又会让
+      // querySelector 拿错节点
+      const view = app?.view as HTMLCanvasElement | undefined
       app?.destroy(false)
+      view?.remove()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -670,9 +798,25 @@ export default function MikuStage({
       if (!stageVisible() || !readyRef.current) return
       const entering = qqTargetRef.current === 0
       qqTargetRef.current = entering ? 1 : 0
-      basePosTargetRef.current = entering ? { ...basePosQQ } : { ...basePosNormal }
+      const base = entering ? basePosQQ : basePosNormal
+      const off = entering ? qqOffsetRef.current ?? 0 : normalOffsetRef.current
+      basePosTargetRef.current = { x: base.x + off, y: base.y }
       bounceAtRef.current = performance.now()
       onQQChange?.(entering)
+      if (entering) {
+        // 变形完成(约 200ms)且庆祝弹跳结束(0.5s)后实测 Q 版轮廓居中偏移:
+        // QQ 的 x 补偿按悬浮球标定,大舞台上按比例放大后仍会偏;实测缓存后
+        // 再次切换直接复用,不再滑动
+        window.setTimeout(() => {
+          // 卸载后 measureCenterDx 因 appRef 已置空而返回 null,无需 disposed 守卫;
+          // 单帧回读有撞上半帧的风险,修正量超画布宽 20% 视为垃圾放弃
+          if (qqTargetRef.current !== 1) return
+          const dx = measureCenterDx()
+          if (!dx || Math.abs(dx) > width * 0.2) return
+          qqOffsetRef.current = (qqOffsetRef.current ?? 0) + dx
+          basePosTargetRef.current.x += dx
+        }, 600)
+      }
     }
     const onThinking = (e: Event) => {
       if (!stageVisible()) return
@@ -796,3 +940,6 @@ export default function MikuStage({
     />
   )
 }
+
+const MikuStage = forwardRef(MikuStageInner)
+export default MikuStage

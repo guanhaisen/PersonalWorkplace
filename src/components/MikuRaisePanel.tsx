@@ -8,7 +8,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AppData } from '../types'
 import { todayStr } from '../api'
 import {
-  achievementView,
   applyPet,
   checkAchievements,
   hasUnlock,
@@ -36,6 +35,7 @@ import MikuStage, {
   MIKU_SQUINT_EVENT,
   MIKU_SPEAK_EVENT,
   MIKU_TAP_EVENT,
+  type MikuStageApi,
 } from './MikuStage'
 
 interface Props {
@@ -57,7 +57,7 @@ function pickStageSize(): { w: number; h: number } {
   const mobile = window.innerWidth < 900
   const ratio = 1.3 // 与悬浮球舞台 170:230 的瘦高比例接近
   const hMax = mobile
-    ? Math.max(300, Math.min(460, window.innerHeight * 0.52))
+    ? Math.max(290, Math.min(372, window.innerHeight * 0.44))
     : Math.max(360, Math.min(600, window.innerHeight - 320))
   let w = Math.round(hMax / ratio)
   // 桌面右侧留出互动侧栏(176px + 间距/内边距)
@@ -107,6 +107,8 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, p
   const [foods, setFoods] = useState<FlyingFood[]>([])
   const [confettiAt, setConfettiAt] = useState(0)
   const [gameOpen, setGameOpen] = useState(false)
+  // 移动端侧栏的分组 Tab(桌面两栏并排展示,Tab 条由 CSS 隐藏)
+  const [mobileTab, setMobileTab] = useState<'actions' | 'emotes'>('actions')
   const comboTimer = useRef<number | null>(null)
   const confettiTimer = useRef<number | null>(null)
   const lastMurmur = useRef('')
@@ -120,6 +122,8 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, p
   // 舞台几何(飞食落点/长按/拖拽)
   const stageWrapRef = useRef<HTMLDivElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
+  // MikuStage 的嘴部锚点接口:喂食落点按当前形态(QQ/普通)实时定位
+  const stageApiRef = useRef<MikuStageApi | null>(null)
   // 摸摸收益冷却 / 互动按钮冷却 / 长按与拖拽手势
   const tapGainAt = useRef(0)
   const cdRef = useRef<Record<string, number>>({})
@@ -340,7 +344,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, p
 
   const flyFood = (emoji: string, btnRect: DOMRect | undefined, onArrive: () => void) => {
     const wrap = stageWrapRef.current
-    const sr = stageRef.current?.getBoundingClientRect()
+    const cr = stageRef.current?.querySelector('.miku-stage.page canvas')?.getBoundingClientRect()
     const wr = wrap?.getBoundingClientRect()
     if (!wrap || !wr) {
       onArrive()
@@ -349,8 +353,11 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, p
     // 缺按钮矩形(理论兜底)时从左下角起飞
     const fromX = btnRect ? btnRect.left + btnRect.width / 2 - wr.left : wr.width * 0.18
     const fromY = btnRect ? btnRect.top - wr.top : wr.height * 0.85
-    const mx = sr ? sr.left - wr.left + sr.width * 0.5 : wr.width / 2
-    const my = sr ? sr.top - wr.top + sr.height * 0.24 : wr.height * 0.3
+    // 嘴部落点:MikuStage 实时回读当前形态(QQ/普通)的轮廓定位嘴部;
+    // 拿不到锚点(Live2D 未就绪等)再退回普通站姿的固定比例
+    const anchor = stageApiRef.current?.getMouthAnchor?.() ?? null
+    const mx = anchor && cr ? cr.left - wr.left + anchor.x : wr.width / 2
+    const my = anchor && cr ? cr.top - wr.top + anchor.y : wr.height * 0.3
     const id = Date.now() + Math.random()
     setFoods((f) => [...f, { id, emoji, left: fromX, top: fromY, dx: mx - fromX, dy: my - fromY }])
     window.setTimeout(() => {
@@ -477,29 +484,27 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, p
   const now = Date.now()
   const lvInfo = petLevel(pet.bond)
   const cur = petNow(pet)
-  const achView = achievementView(pet)
   const cooling = (key: string) => Math.max(0, Math.ceil(((cdRef.current[key] ?? 0) - now) / 1000))
   const gameCooling = Math.max(0, Math.ceil((gameCdRef.current - now) / 1000))
 
   type ActionDef = {
     key: string
     label: string
-    icon: string
     lock: number
     unlock?: Parameters<typeof hasUnlock>[1]
     cdKey: string
     onClick: () => void
   }
   const actions: ActionDef[] = [
-    { key: 'pat', label: '摸摸头', icon: '🤚', lock: 0, cdKey: 'pat', onClick: doPat },
-    { key: 'leek', label: '喂大葱', icon: '🥬', lock: 0, cdKey: 'feed-leek', onClick: feed('leek') },
-    { key: 'snack', label: '喂点心', icon: '🍞', lock: 0, cdKey: 'feed-snack', onClick: feed('snack') },
-    { key: 'pudding', label: '喂布丁', icon: '🍮', lock: 2, unlock: 'pudding', cdKey: 'feed-pudding', onClick: feed('pudding') },
-    { key: 'highfive', label: '击掌', icon: '🙌', lock: 3, unlock: 'highfive', cdKey: 'highfive', onClick: doHighfive },
-    { key: 'request', label: '点歌', icon: '🎤', lock: 4, unlock: 'request', cdKey: 'request', onClick: doRequest },
-    { key: 'play', label: '一起玩', icon: '🎪', lock: 0, cdKey: 'play', onClick: doPlay },
-    { key: 'sing', label: '唱首歌', icon: '🎵', lock: 0, cdKey: 'sing', onClick: doSing },
-    { key: 'game', label: '接大葱', icon: '🧺', lock: 0, cdKey: 'game-open', onClick: openGame },
+    { key: 'pat', label: '摸摸头', lock: 0, cdKey: 'pat', onClick: doPat },
+    { key: 'leek', label: '喂大葱', lock: 0, cdKey: 'feed-leek', onClick: feed('leek') },
+    { key: 'snack', label: '喂点心', lock: 0, cdKey: 'feed-snack', onClick: feed('snack') },
+    { key: 'pudding', label: '喂布丁', lock: 2, unlock: 'pudding', cdKey: 'feed-pudding', onClick: feed('pudding') },
+    { key: 'highfive', label: '击掌', lock: 3, unlock: 'highfive', cdKey: 'highfive', onClick: doHighfive },
+    { key: 'request', label: '点歌', lock: 4, unlock: 'request', cdKey: 'request', onClick: doRequest },
+    { key: 'play', label: '一起玩', lock: 0, cdKey: 'play', onClick: doPlay },
+    { key: 'sing', label: '唱首歌', lock: 0, cdKey: 'sing', onClick: doSing },
+    { key: 'game', label: '接大葱', lock: 0, cdKey: 'game-open', onClick: openGame },
   ]
 
   return (
@@ -565,6 +570,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, p
             {!ready && !failed && <div className="raise-loading">正在召唤 Miku…</div>}
             {failed && <div className="raise-loading">Live2D 加载失败,养成数值仍然有效</div>}
             <MikuStage
+              ref={stageApiRef}
               variant="page"
               width={size.w}
               height={size.h}
@@ -594,7 +600,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, p
         <div className="raise-stats">
           <div className="raise-bars">
             <div className="raise-bar-row">
-              <span className="raise-bar-label">😊 心情</span>
+              <span className="raise-bar-label">心情</span>
               <span className="raise-bar">
                 <i className="mood" style={{ width: `${cur.mood}%` }} />
               </span>
@@ -603,7 +609,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, p
               </span>
             </div>
             <div className="raise-bar-row">
-              <span className="raise-bar-label">🍚 饱食</span>
+              <span className="raise-bar-label">饱食</span>
               <span className="raise-bar">
                 <i className="full" style={{ width: `${cur.fullness}%` }} />
               </span>
@@ -612,7 +618,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, p
               </span>
             </div>
             <div className="raise-bar-row">
-              <span className="raise-bar-label">💖 亲密</span>
+              <span className="raise-bar-label">亲密</span>
               <span className="raise-bar">
                 <i className="bond" style={{ width: `${Math.min(100, (lvInfo.cur / lvInfo.need) * 100)}%` }} />
               </span>
@@ -624,7 +630,22 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, p
         </div>
         </div>
 
-        <aside className="raise-side">
+        <aside className={`raise-side ${mobileTab === 'emotes' ? 'tab-emotes' : 'tab-actions'}`}>
+          <div className="raise-tabs" role="tablist">
+            <button
+              className={`raise-tab${mobileTab === 'actions' ? ' on' : ''}`}
+              onClick={() => setMobileTab('actions')}
+            >
+              互动
+            </button>
+            <button
+              className={`raise-tab${mobileTab === 'emotes' ? ' on' : ''}`}
+              onClick={() => setMobileTab('emotes')}
+            >
+              动作
+            </button>
+          </div>
+          <div className="raise-group raise-group-actions">
           <div className="raise-side-title">互动</div>
           <div className="raise-actions">
             {actions.map((a) => {
@@ -632,7 +653,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, p
               const left = cooling(a.cdKey)
               const isGame = a.key === 'game'
               const disabled = left > 0 || locked || (isGame && gameCooling > 0)
-              const label = locked ? `🔒 ${a.label} Lv.${a.lock}` : `${a.icon} ${a.label}`
+              const label = locked ? `${a.label} Lv.${a.lock}` : a.label
               const suffix = isGame && gameCooling > 0 ? ` ${Math.ceil(gameCooling / 60)}分` : left > 0 ? ` ${left}s` : ''
               return (
                 <button
@@ -656,6 +677,8 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, p
               )
             })}
           </div>
+          </div>
+          <div className="raise-group raise-group-emotes">
           <div className="raise-side-title">动作</div>
           <div className="raise-emotes">
             <button
@@ -663,24 +686,24 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, p
               onClick={() => playMiku(null)}
               title="取消保留动作,回到默认待机"
             >
-              ↩ 默认
+              默认
             </button>
             {(
               [
-                ['比心', '💗', undefined],
-                ['脸红', '😳', undefined],
-                ['圈圈', '😯', undefined],
-                ['唱歌', '🎶', 3200],
-                ['前倾', '🙇', undefined],
-                ['拿葱舞', '💃', undefined],
+                ['比心', undefined],
+                ['脸红', undefined],
+                ['圈圈', undefined],
+                ['唱歌', 3200],
+                ['前倾', undefined],
+                ['拿葱舞', undefined],
               ] as const
-            ).map(([name, icon, talkMs]) => (
+            ).map(([name, talkMs]) => (
               <button
                 key={name}
                 className={`raise-emote${mikuAction === name ? ' on' : ''}`}
                 onClick={() => playMiku(name, talkMs)}
               >
-                {icon} {name}
+                {name}
               </button>
             ))}
             <button
@@ -688,20 +711,9 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, p
               onClick={() => window.dispatchEvent(new CustomEvent(MIKU_QQ_EVENT))}
               title="双击舞台也可以切换"
             >
-              🧸 QQ人
+              QQ人
             </button>
           </div>
-          <div className="raise-badges">
-            {achView.map((a) => (
-              <span
-                key={a.key}
-                className={`raise-badge${a.tier >= 0 ? ' on' : ''}`}
-                title={`${a.name}:${a.count}${a.next ? `/${a.next}` : '(满级)'}${a.tier >= 0 ? ' · 已达成' : ''}`}
-              >
-                {a.emoji}
-                {a.tier >= 0 ? `×${a.tier + 1}` : ''}
-              </span>
-            ))}
           </div>
         </aside>
       </section>

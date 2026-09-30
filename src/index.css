@@ -4128,6 +4128,18 @@ kbd {
   letter-spacing: 0.08em;
 }
 
+.raise-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+/* 分组 Tab:桌面两栏并排展示不出现,移动端显示为分段选择器 */
+.raise-tabs {
+  display: none;
+}
+
 .raise-side .raise-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -4147,13 +4159,6 @@ kbd {
   grid-column: span 2;
 }
 
-.raise-side .raise-badges {
-  justify-content: flex-start;
-  gap: 5px;
-  border-top: 1px dashed var(--line);
-  margin-top: auto;
-  padding-top: 10px;
-}
 
 .raise-head {
   display: flex;
@@ -4285,7 +4290,7 @@ kbd {
 }
 
 .raise-bar-label {
-  width: 4.4em;
+  width: 2.8em;
   color: var(--muted);
   font-family: var(--mono);
   flex: none;
@@ -4384,6 +4389,11 @@ kbd {
   .raise-left {
     flex: none;
     flex-direction: column;
+    padding: 12px 14px 12px;
+  }
+
+  .raise-stage-wrap {
+    padding-top: 38px;
   }
 
   .raise-side {
@@ -4391,8 +4401,69 @@ kbd {
     border-left: none;
     padding-left: 0;
     border-top: 1px dashed var(--line);
-    padding-top: 12px;
+    padding-top: 8px;
     overflow: visible;
+  }
+
+  .raise-stats {
+    gap: 6px;
+  }
+
+  .raise-bars {
+    gap: 5px;
+  }
+
+  .raise-tabs {
+    display: flex;
+    gap: 4px;
+    background: #edf1ee;
+    border-radius: 8px;
+    padding: 3px;
+  }
+
+  .raise-tab {
+    flex: 1;
+    height: 26px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    font-size: 12.5px;
+    font-family: inherit;
+    color: var(--muted);
+    cursor: pointer;
+  }
+
+  .raise-tab.on {
+    background: var(--card);
+    color: var(--accent-deep);
+    font-weight: 600;
+    box-shadow: 0 1px 3px rgba(16, 24, 40, 0.12);
+  }
+
+  /* Tab 互斥:只显示当前组,配合压缩后的舞台保证一屏 */
+  .raise-side.tab-actions .raise-group-emotes,
+  .raise-side.tab-emotes .raise-group-actions {
+    display: none;
+  }
+
+  /* Tab 文字已表达分组名,组标题隐藏;动作格三列,一组压进一屏 */
+  .raise-side-title {
+    display: none;
+  }
+
+  .raise-group {
+    gap: 8px;
+  }
+
+  /* 提高权重:.raise-emotes 基础规则在本查询之后声明,同权重会被后来居上 */
+  .raise-side .raise-emotes {
+    grid-template-columns: repeat(4, 1fr);
+    gap: 5px;
+  }
+
+  .raise-side .raise-emote {
+    height: 26px;
+    font-size: 11.5px;
   }
 
   .raise-side .raise-actions {
@@ -4409,9 +4480,6 @@ kbd {
     grid-column: auto;
   }
 
-  .raise-side .raise-badges {
-    justify-content: center;
-  }
 }
 
 /* ---------- 养成页互动增强:连击/飞食/撒花/小游戏/徽章 ---------- */
@@ -4565,33 +4633,6 @@ kbd {
   color: var(--accent-deep);
   background: var(--accent-tint);
   font-weight: 600;
-}
-
-/* 成就徽章行 */
-.raise-badges {
-  display: flex;
-  gap: 6px;
-  justify-content: center;
-  flex-wrap: wrap;
-}
-
-.raise-badge {
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--ink);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 2px 9px;
-  background: var(--card);
-  opacity: 0.4;
-  filter: grayscale(1);
-}
-
-.raise-badge.on {
-  opacity: 1;
-  filter: none;
-  border-color: var(--accent-soft);
-  background: var(--accent-tint);
 }
 
 /* 接大葱小游戏覆盖层 */
