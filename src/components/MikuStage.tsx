@@ -133,6 +133,31 @@ function loadLive2DPlugin(): Promise<typeof import('pixi-live2d-display/cubism4'
   return import('pixi-live2d-display/cubism4')
 }
 
+// 同页双舞台(悬浮球 + 养成页)各有一个 WebGL 上下文,而 pixi-live2d-display 的
+// CubismShader_WebGL 是模块级单例:着色器程序缓存在「第一次编译它的那个上下文」上,
+// 且 Live2DModel 的 glContextID 只跟踪各自的 renderer——养成页模型首次渲染会把全局
+// 缓存刷成养成页上下文的程序,悬浮球模型感知不到这次交换,继续拿别人的程序画自己的
+// 上下文,GL_INVALID_OPERATION,模型从此空白(实测:进过养成页后悬浮球永久空帧)。
+// 这里在 _render 外层按「全局最近一次 Live2D 渲染的上下文」检测切换,强制失配模型
+// 走库自带的 updateWebGLContext(glContextID 置 -1)重建本上下文的着色器/蒙版缓存。
+// 每次跨页切换各重编译一次着色器(毫秒级),换回哪个页面都能立刻恢复显示。
+let crossContextPatched = false
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function patchCrossContextShaderCache(Live2DModelCtor: { prototype: any }) {
+  if (crossContextPatched) return
+  crossContextPatched = true
+  const proto = Live2DModelCtor.prototype
+  const origRender: (renderer: { CONTEXT_UID: number }) => void = proto._render
+  let lastUid: number | null = null
+  proto._render = function (renderer: { CONTEXT_UID: number }) {
+    if (lastUid !== null && lastUid !== renderer.CONTEXT_UID) {
+      ;(this as unknown as { glContextID: number }).glContextID = -1
+    }
+    lastUid = renderer.CONTEXT_UID
+    origRender.call(this, renderer)
+  }
+}
+
 // 拉取模型设置。model3.json 本身没有声明表情/动作,这里在内存里把模型自带的表情文件
 // 与拿葱动作(Scene1,即 VTS 动作按键)注册进去(不改动磁盘上的任何模型文件);
 // 水印表情刻意不注册,水印参数在模型加载后直接按作者预留档位关闭。
@@ -236,6 +261,10 @@ function MikuStageInner(
   // 实测一次;QQ 形态轮廓不同,首次变形完成后再实测一次并缓存,之后切换直接复用
   const normalOffsetRef = useRef(0)
   const qqOffsetRef = useRef<number | null>(null)
+  // QQ 形态的纵向落地补偿:变形后角色实际脚底位置随模型缩放变化,标定常量
+  // (qqShiftFor 按 230 高标定)在大/小舞台上对不准,实测轮廓底边到画布底的间隙
+  // 后把人精确沉到容器底沿
+  const qqOffsetYRef = useRef(0)
   // page 变体的周期居中自检定时器,卸载时清理
   const centeringTimerRef = useRef<number | null>(null)
   // 舞台是否可见:挂在 display:none 子树(如切走后的养成页/隐藏的悬浮球)里时应
@@ -456,6 +485,7 @@ function MikuStageInner(
           throw err
         }
         Live2DModelCtor.registerTicker(PIXI.Ticker)
+        patchCrossContextShaderCache(Live2DModelCtor)
         if (disposed) return
         const settings = await buildModelSettings()
         if (disposed) return
@@ -890,7 +920,10 @@ function MikuStageInner(
       qqTargetRef.current = entering ? 1 : 0
       const base = entering ? basePosQQ : basePosNormal
       const off = entering ? qqOffsetRef.current ?? 0 : normalOffsetRef.current
-      basePosTargetRef.current = { x: base.x + off, y: base.y }
+      basePosTargetRef.current = {
+        x: base.x + off,
+        y: base.y + (entering ? qqOffsetYRef.current : 0),
+      }
       bounceAtRef.current = performance.now()
       onQQChange?.(entering)
       if (entering) {
@@ -901,10 +934,22 @@ function MikuStageInner(
           // 卸载后 measureCenterDx 因 appRef 已置空而返回 null,无需 disposed 守卫;
           // 单帧回读有撞上半帧的风险,修正量超画布宽 20% 视为垃圾放弃
           if (qqTargetRef.current !== 1) return
+          const app = appRef.current
+          const sil = scanSilhouette()
+          if (!app || !sil) return
           const dx = measureCenterDx()
-          if (!dx || Math.abs(dx) > width * 0.2) return
-          qqOffsetRef.current = (qqOffsetRef.current ?? 0) + dx
-          basePosTargetRef.current.x += dx
+          if (dx && Math.abs(dx) <= width * 0.2) {
+            qqOffsetRef.current = (qqOffsetRef.current ?? 0) + dx
+            basePosTargetRef.current.x += dx
+          }
+          // 纵向自愈:GL 坐标 y 向上,sil.minY = 最低不透明像素(脚底)离画布底的
+          // 间隙——理论上应为 0(站回容器底沿),实测不为零说明标定量在这个
+          // 舞台尺寸上漂了,按间隙下沉;正确时为零不动作。量级钳制兜底瞬态
+          const gapY = sil.minY / app.renderer.resolution
+          if (gapY > 1.5 && gapY < height * 0.5) {
+            qqOffsetYRef.current += gapY
+            basePosTargetRef.current.y += gapY
+          }
         }, 600)
       }
     }

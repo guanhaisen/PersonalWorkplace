@@ -434,15 +434,30 @@ textarea::placeholder {
   margin: 0 24px;
   display: flex;
   justify-content: safe center;
+  position: relative;
 }
 
+/* 放不下的收藏收进「+N」按钮,顶栏不再横向滚动 */
 .head-links-inner {
   display: flex;
   align-items: center;
   gap: 8px;
   max-width: 100%;
-  overflow-x: auto;
   padding: 2px;
+}
+
+/* 隐藏测量行:与真实药丸同构,量宽度供折叠计算;
+   fixed + 屏幕外,避免把 .content 撑出横向滚动区 */
+.head-links-probe {
+  position: fixed;
+  left: -9999px;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: nowrap;
 }
 
 .head-link {
@@ -469,17 +484,23 @@ textarea::placeholder {
 }
 
 .head-link a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   color: var(--ink);
   text-decoration: none;
   font-size: 12.5px;
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .head-link a:hover {
   color: var(--accent-deep);
+}
+
+.head-link-t {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .head-link-x {
@@ -504,6 +525,9 @@ textarea::placeholder {
 }
 
 .head-link-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 1px dashed var(--line);
   border-radius: 999px;
   background: none;
@@ -518,6 +542,213 @@ textarea::placeholder {
 .head-link-add:hover {
   color: var(--accent-deep);
   border-color: var(--accent-soft);
+}
+
+/* 收藏项 favicon:直取站点图标,失败回退域名首字字母块 */
+
+.link-ico {
+  display: block;
+  border-radius: 4px;
+  object-fit: cover;
+  background: var(--paper-2);
+  flex: none;
+}
+
+.link-ico-letter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: #fff;
+  font-weight: 700;
+  line-height: 1;
+  flex: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 「+N」折叠按钮:放不下的收藏都收在这里 */
+
+.head-links-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 58px;
+  border: 1px solid var(--accent-soft);
+  border-radius: 999px;
+  background: var(--accent-tint);
+  color: var(--accent-deep);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  flex: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.head-links-more:hover {
+  border-color: var(--accent);
+}
+
+.head-links-more .more-chev {
+  font-size: 9px;
+  line-height: 1;
+  transition: transform 0.15s ease;
+}
+
+.head-links-more.open .more-chev {
+  transform: rotate(180deg);
+}
+
+/* ---------- +N「全部收藏」弹层 ---------- */
+
+.links-more-pop {
+  position: fixed;
+  z-index: 60;
+  width: min(340px, calc(100vw - 24px));
+  max-height: min(480px, calc(100vh - 100px));
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(16, 24, 40, 0.18);
+  overflow: hidden;
+  animation: ai-pop-in 0.16s ease;
+}
+
+.links-more-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+  flex: none;
+}
+
+.links-more-cnt {
+  background: var(--accent-tint);
+  color: var(--accent-deep);
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 18px;
+  font-family: var(--mono);
+}
+
+.links-more-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 10px 12px;
+  overflow-y: auto;
+  align-content: start;
+}
+
+.links-more-card {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 6px 8px;
+  background: var(--card);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.links-more-card a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 12.5px;
+}
+
+.links-more-t {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.links-more-act {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text-3);
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px;
+  border-radius: 5px;
+  opacity: 0;
+  flex: none;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+
+.links-more-card:hover .links-more-act {
+  opacity: 1;
+}
+
+.links-more-act.edit:hover {
+  color: var(--accent-deep);
+}
+
+.links-more-act:not(.edit):hover {
+  color: var(--red);
+}
+
+/* 拖拽中的卡片:脱离网格流悬浮跟随指针 */
+.links-more-card.grid-dragging {
+  position: fixed;
+  z-index: 5;
+  cursor: grabbing;
+  border-color: var(--accent);
+  box-shadow: 0 10px 26px rgba(16, 24, 40, 0.18);
+  background: var(--card);
+  pointer-events: none;
+}
+
+.links-more-edit {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  font-size: 12px;
+  padding: 0 8px;
+}
+
+.links-more-foot {
+  flex: none;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.links-more-foot .head-link-add {
+  width: 100%;
+}
+
+.links-more-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.links-more-form .in {
+  height: 30px;
+  font-size: 12px;
+}
+
+.links-more-form-btns {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .head-link-form {
@@ -3444,6 +3675,34 @@ kbd {
     justify-content: flex-start;
   }
 
+  /* 收藏添加表单在窄屏换行铺满,不再横向溢出 */
+  .head-links-inner {
+    flex-wrap: wrap;
+  }
+
+  .head-link-form {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+  }
+
+  .head-link-form .in {
+    flex: 1 1 130px;
+    width: auto;
+  }
+
+  /* 全部收藏弹层改为底部抽屉 */
+  .links-more-pop {
+    left: 0 !important;
+    right: 0;
+    top: auto !important;
+    bottom: 0 !important;
+    width: 100%;
+    max-height: 70vh;
+    border-radius: 14px 14px 0 0;
+    border-bottom: none;
+    animation: links-sheet-up 0.2s ease;
+  }
+
   /* 头部工具行(设为开始页/重置布局/⌘K/GitHub)整行收进命令面板,手机只留日期行 ⌘K 徽标 */
   .top-right {
     display: none;
@@ -3683,7 +3942,19 @@ kbd {
 /* 触屏没有 hover:原本悬停才出现的操作改为常显 */
 @media (hover: none) {
   .head-link-x,
-  .name-edit-btn {
+  .name-edit-btn,
+  .links-more-act {
+    opacity: 1;
+  }
+}
+
+@keyframes links-sheet-up {
+  from {
+    transform: translateY(30px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
     opacity: 1;
   }
 }

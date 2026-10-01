@@ -349,6 +349,8 @@ export default function App() {
   }, [fabPos])
   // 待弹出的聊天窗定时器:双击第二下会取消它
   const fabPopTimer = useRef<number | null>(null)
+  // 弹窗被双击第一下的延时器自动打开的时刻(慢速双击容错用,见 onDoubleClick)
+  const fabPopOpenedAtRef = useRef(0)
   // 长按(≈500ms)打开桌宠菜单:移动端的「右键」等价物,与单击/双击/拖动互斥
   const fabHoldTimer = useRef<number | null>(null)
   // 长按已触发:吞掉随后松手产生的 click,防止聊天弹窗叠在菜单上
@@ -458,6 +460,9 @@ export default function App() {
       : null
     setFabChatPos(anchorFabChat(fab))
     setFabChatOpen(true)
+    // 记录自动弹出的时刻:双击的第二下来得慢(>280ms)时弹窗已先开了,
+    // onDoubleClick 靠这个时间戳分辨「双击意图」与「真的要用弹窗」
+    fabPopOpenedAtRef.current = Date.now()
   }
 
   const onFabPointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
@@ -1617,8 +1622,17 @@ export default function App() {
               }, FAB_POP_DELAY)
             }}
             onDoubleClick={() => {
-              // 弹窗开着时双击也是摸摸,不切 QQ 形态
-              if (!fabChatOpen) window.dispatchEvent(new CustomEvent(MIKU_QQ_EVENT))
+              // 弹窗开着时双击也是摸摸,不切 QQ 形态;唯一例外:弹窗是本次双击的
+              // 第一下刚自动弹出的(间隔 >280ms 的慢速双击会走到这)——收起弹窗,
+              // 照常切换 QQ 形态,否则慢速双击永远只会弹聊天窗
+              if (fabChatOpen) {
+                if (fabPopOpenedAtRef.current && Date.now() - fabPopOpenedAtRef.current < 450) {
+                  setFabChatOpen(false)
+                  window.dispatchEvent(new CustomEvent(MIKU_QQ_EVENT))
+                }
+                return
+              }
+              window.dispatchEvent(new CustomEvent(MIKU_QQ_EVENT))
             }}
           >
             {!mikuFailed && (
