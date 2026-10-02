@@ -2624,16 +2624,147 @@ textarea::placeholder {
   background: var(--red-tint);
 }
 
+/* 添加表单上移到列表上方(原 margin-top:auto 钉底);面板 relative 供撤销条锚定 */
+.panel-habits {
+  position: relative;
+}
+
 .add-sm {
   display: flex;
   gap: 8px;
-  margin-top: auto;
-  padding-top: 12px;
+  margin: 12px 0 4px;
 }
 
 .add-sm .in {
   flex: 1;
   min-width: 0;
+}
+
+/* header 右侧:一键打卡 + 静态 meta */
+.p-head-extra {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.hab-all-cb {
+  height: 26px;
+  padding: 0 11px;
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  background: var(--card);
+  color: var(--accent);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.hab-all-cb:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* 今日已完成的行:名字淡出,扫一眼知道还欠哪些 */
+.habit-line.done-today .name {
+  color: var(--text-3);
+  opacity: 0.72;
+}
+
+/* 删除二次确认态:变红加宽盖住连续列,等第二击(2.5s 不点自动复位) */
+.habit-del {
+  white-space: nowrap;
+  z-index: 2;
+}
+
+.habit-del.armed {
+  opacity: 1;
+  width: auto;
+  padding: 0 8px;
+  background: var(--red);
+  color: #fff;
+  font-weight: 600;
+}
+
+.habit-del.armed:hover {
+  background: #b91c1c;
+  color: #fff;
+}
+
+/* 空状态:陪伴文案 + 模板一键添加 */
+.hab-empty {
+  padding: 36px 8px 30px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.hab-presets {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.hab-preset {
+  height: 30px;
+  padding: 0 13px;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted);
+  font-size: 12.5px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.hab-preset:hover {
+  border-color: var(--accent);
+  border-style: solid;
+  color: var(--accent);
+  background: var(--accent-tint);
+}
+
+/* 触屏热区:圆点/勾选框视觉不变,命中区扩到约 22/34px(触屏推荐 44px 级,
+   但相邻圆点列中心距只有 22px,再大会互相误触)。inset 按 padding box 解析,
+   border-box 下要补偿 1.5px 边框,否则热区比设计小一圈 */
+.dot-cell {
+  position: relative;
+}
+
+.dot-cell::before {
+  content: '';
+  position: absolute;
+  inset: -4.5px;
+  border-radius: 50%;
+}
+
+.today-cb {
+  position: relative;
+}
+
+.today-cb::before {
+  content: '';
+  position: absolute;
+  inset: -8.5px;
+  border-radius: 8px;
+}
+
+/* 移动端整页滚动:列表自然高度,添加表单压回列表之后(拇指区),与待办页同款 */
+@media (max-width: 640px) {
+  .panel-habits .habit-list {
+    order: 1;
+  }
+
+  .panel-habits .add-sm {
+    order: 2;
+    margin-top: 12px;
+  }
 }
 
 /* ---------- 快捷键卡片 ---------- */
