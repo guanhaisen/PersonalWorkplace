@@ -66,7 +66,9 @@ interface Props {
   visible?: boolean
 }
 
-// 舞台尺寸按视口在挂载时定一次(中途旋转/缩放窗口不重建画布,CSS 层面整体等比即可)
+// 舞台尺寸按视口在挂载时定一次(中途旋转/缩放窗口见下方 resize 监听)
+// 手势指南的「已看过」标记:首次进养成页自动弹出,之后靠标题栏「?」重开
+const GUIDE_KEY = 'miku.raise.guide.v1'
 function pickStageSize(): { w: number; h: number } {
   const mobile = window.innerWidth < 900
   const ratio = 1.3 // 与悬浮球舞台 170:230 的瘦高比例接近
@@ -99,6 +101,10 @@ const GAME_LINES = (score: number) =>
         : '呜,葱掉了一地…再来一次?'
 const SONGS = ['《甩葱歌》', '《World is Mine》', '《千本樱》', '《Melt》', '《Tell Your World》']
 
+// 台词气泡的优先级:升级/成就等「必达消息」不再被后续台词截断(旧行为是 say
+// 直接互相覆盖,延迟播报 setTimeout 也常撞车丢消息)
+type BubblePrio = 1 | 2 | 3
+
 interface FlyingFood {
   id: number
   emoji: string
@@ -109,19 +115,37 @@ interface FlyingFood {
 }
 
 export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, onQQChange, playMiku, emoteOn, toggleEmote, clearEmotes, visible = true }: Props) {
-  const [size] = useState(pickStageSize)
+  const [size, setSize] = useState(pickStageSize)
+  const stageSizeRef = useRef(size)
   const [ready, setReady] = useState(false)
   const [failed, setFailed] = useState(false)
-  // 她说的话(互动反馈/闲置碎碎念/系统播报共用),5 秒自动消失;ach = 句首要带的成就章
-  const [bubble, setBubble] = useState<{ id: number; text: string; ach?: { key: keyof MikuPetCounters; tier: number } } | null>(null)
+  // 台词气泡条目:ach = 句首要带的成就章
+  interface BubbleItem {
+    id: number
+    text: string
+    ach?: { key: keyof MikuPetCounters; tier: number }
+    prio: BubblePrio
+  }
+  // 数值变化飘字(舞台中下部冒出后上浮消散)
+  interface FloatText {
+    id: number
+    text: string
+    neg: boolean
+    x: number
+  }
+  const [bubble, setBubble] = useState<BubbleItem | null>(null)
   const bubbleTimer = useRef<number | null>(null)
-  const bubbleRef = useRef<string | null>(null)
+  const bubbleRef = useRef<BubbleItem | null>(null)
+  const bubbleQueueRef = useRef<BubbleItem[]>([])
+  const [floats, setFloats] = useState<FloatText[]>([])
   // 连点连击浮标(x2…x5)/ 飞行中的食物 / 升级撒花 / 小游戏开关 / 成就浮层
   const [combo, setCombo] = useState<{ id: number; count: number; done: boolean } | null>(null)
   const [foods, setFoods] = useState<FlyingFood[]>([])
   const [confettiAt, setConfettiAt] = useState(0)
   const [gameOpen, setGameOpen] = useState(false)
   const [achOpen, setAchOpen] = useState(false)
+  // 手势指南浮层:首次进入自动弹出(localStorage 记忆),「?」按钮可随时重开
+  const [guideOpen, setGuideOpen] = useState(() => !localStorage.getItem(GUIDE_KEY))
   // 移动端侧栏的分组 Tab(桌面两栏并排展示,Tab 条由 CSS 隐藏)
   const [mobileTab, setMobileTab] = useState<'actions' | 'emotes'>('actions')
   // 模型网格失能自愈(同页双模型毒害先建那只,见 MikuStage.onModelDead 注释)
@@ -157,15 +181,62 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
   // 小游戏冷却(会话内 3 分钟)
   const gameCdRef = useRef(0)
 
-  const say = useCallback((text: string, ach?: { key: keyof MikuPetCounters; tier: number }) => {
-    bubbleRef.current = text
-    setBubble({ id: Date.now() + Math.random(), text, ach })
+  // 立即显示一条气泡并计时,播完自动从队列取下一条(留 260ms 间隙,避免无缝顶替
+  // 看起来像闪烁)。useCallback([]) 内部自引用稳定:递归调用到的始终是首个渲染的
+  // 同一函数实例,而它只读写 ref 与 setState,行为与最新渲染无关
+  const showBubbleNow = useCallback((item: BubbleItem) => {
+    bubbleRef.current = item
+    setBubble(item)
     if (bubbleTimer.current !== null) window.clearTimeout(bubbleTimer.current)
     bubbleTimer.current = window.setTimeout(() => {
       bubbleRef.current = null
       setBubble(null)
+      const next = bubbleQueueRef.current.shift()
+      if (next) window.setTimeout(() => showBubbleNow(next), 260)
     }, 5000)
   }, [])
+
+  // 优先级:3 = 升级/成就/解锁(必达:当前有气泡时入队,容量 2 且挤掉 1 级)
+  //        2 = 动作台词/系统提示(顶替当前的 1/2 级气泡,保留旧 say 的直感)
+  //        1 = 撒娇/碎碎念/庆祝播报(忙时直接丢弃,防刷屏)
+  const say = useCallback((text: string, opts?: { prio?: BubblePrio; ach?: BubbleItem['ach'] }) => {
+    const item: BubbleItem = {
+      id: Date.now() + Math.random(),
+      text,
+      ach: opts?.ach,
+      prio: opts?.prio ?? 2,
+    }
+    const cur = bubbleRef.current
+    if (!cur) {
+      showBubbleNow(item)
+      return
+    }
+    if (item.prio === 3) {
+      bubbleQueueRef.current = [...bubbleQueueRef.current.filter((x) => x.prio > 1), item].slice(-2)
+      return
+    }
+    if (item.prio === 2 && cur.prio <= 2 && bubbleQueueRef.current.every((x) => x.prio < 3)) {
+      showBubbleNow(item)
+      return
+    }
+    // 1 级消息或会打断必达播报的情况:静默丢弃
+  }, [])
+
+  // 数值变化飘字:聚合一条冒在舞台中下部,负增量红色。喂食链路里 settle 在食物
+  // 到嘴时才调用,飘字与咀嚼口型同帧出现,「按钮 → 食物 → 数值」因果感闭环
+  const pushFloat = (delta: { mood?: number; fullness?: number; bond?: number }) => {
+    const fmt = (n: number) => `${n > 0 ? '+' : ''}${Math.round(n * 10) / 10}`
+    const parts: string[] = []
+    if (delta.mood) parts.push(`心情 ${fmt(delta.mood)}`)
+    if (delta.fullness) parts.push(`饱食 ${fmt(delta.fullness)}`)
+    if (delta.bond) parts.push(`亲密 ${fmt(delta.bond)}`)
+    if (parts.length === 0) return
+    const id = Date.now() + Math.random()
+    const total = (delta.mood ?? 0) + (delta.fullness ?? 0) + (delta.bond ?? 0)
+    const item: FloatText = { id, text: parts.join(' · '), neg: total < 0, x: 26 + Math.random() * 48 }
+    setFloats((f) => [...f.slice(-3), item])
+    window.setTimeout(() => setFloats((f) => f.filter((x) => x.id !== id)), 1150)
+  }
 
   // 心跳:按钮冷却倒计时展示(数值衰减在渲染时按 ts 回推,不需要心跳)
   const [, setTick] = useState(0)
@@ -180,7 +251,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
     confettiTimer.current = window.setTimeout(() => setConfettiAt(0), 2600)
   }
 
-  // 数值结算:叠加增量(可选累计一个互动计数)→ 升级检测(撒花+播报+解锁提示)
+  // 数值结算:叠加增量(可选累计一个互动计数)→ 飘字 → 升级检测(撒花+播报+解锁提示)
   const settle = (
     delta: { mood?: number; fullness?: number; bond?: number },
     counter?: keyof MikuPetCounters,
@@ -194,13 +265,15 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
       }
     }
     onPet(next)
+    pushFloat(delta)
     const after = petLevel(next.bond).level
     if (after > before) {
       fireConfetti()
       window.dispatchEvent(new CustomEvent(MIKU_CHEER_EVENT))
-      say(`亲密度升级啦!现在我们是「${petTitle(after)}」了`)
+      say(`亲密度升级啦!现在我们是「${petTitle(after)}」了`, { prio: 3 })
       const unlock = UNLOCKS.find((u) => u.lv === after)
-      if (unlock) window.setTimeout(() => say(`解锁新互动「${unlock.label}」!快试试吧~`), 3000)
+      // 解锁提示直接进队列:升级台词播完自动接上,不再靠延迟 setTimeout 猜时机
+      if (unlock) say(`解锁新互动「${unlock.label}」!快试试吧~`, { prio: 3 })
       return { up: after, next }
     }
     // 未升级 up 为 0,调用方据此决定是否播报动作台词
@@ -208,13 +281,15 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
   }
 
   // 成就检查:基于「本次结算后的存档」判断(同步链路里 petRef 要等重渲染才更新,
-  // 读 ref 会拿到旧值),新达成 → 亲密度 +5 + 播报(延迟 1.2s,别盖掉升级/动作台词)。
-  // 奖励 +5 也可能跨级:升级链路(撒花/称号播报/解锁提示)与 settle 共用一套,不能静默。
+  // 读 ref 会拿到旧值),新达成 → 亲密度 +5 + 播报(必达消息进队列,排在升级台词
+  // 之后,不再丢失)。奖励 +5 也可能跨级:升级链路(撒花/称号播报/解锁提示)
+  // 与 settle 共用一套,不能静默
   const checkAch = (base: MikuPet) => {
     const fresh = checkAchievements(base)
     if (fresh.length === 0) return
     const levelBefore = petLevel(base.bond).level
     let next = applyPet(base, { bond: 5 })
+    pushFloat({ bond: 5 })
     next = { ...next, achievements: { ...next.achievements } }
     for (const a of fresh) next.achievements![a.key] = a.tier
     onPet(next)
@@ -224,12 +299,15 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
     if (levelAfter > levelBefore) {
       fireConfetti()
       window.dispatchEvent(new CustomEvent(MIKU_CHEER_EVENT))
-      say(`${achLine}亲密度升级啦,现在是「${petTitle(levelAfter)}」了`, { key: first.key, tier: first.tier })
+      say(`${achLine}亲密度升级啦,现在是「${petTitle(levelAfter)}」了`, {
+        prio: 3,
+        ach: { key: first.key, tier: first.tier },
+      })
       const unlock = UNLOCKS.find((u) => u.lv === levelAfter)
-      if (unlock) window.setTimeout(() => say(`解锁新互动「${unlock.label}」!快试试吧~`), 3000)
+      if (unlock) say(`解锁新互动「${unlock.label}」!快试试吧~`, { prio: 3 })
       return
     }
-    window.setTimeout(() => say(achLine, { key: first.key, tier: first.tier }), 1200)
+    say(achLine, { prio: 3, ach: { key: first.key, tier: first.tier } })
   }
 
   // 进页:签到(连续来访加成)+ 每日见面礼 + 时段×状态问候;跨级时撒花播报
@@ -249,8 +327,14 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
       parts.push(`亲密度升级啦!现在我们是「${petTitle(levelAfter)}」了`)
     }
     parts.push(makeGreetLine(next))
-    if (visit.bonus > 0) parts.push(`连续来访 ${visit.streak} 天,亲密度 +${visit.bonus}!`)
-    if (!bonusToday) parts.push('每日见面礼:心情 +10~')
+    if (visit.bonus > 0) {
+      parts.push(`连续来访 ${visit.streak} 天,亲密度 +${visit.bonus}!`)
+      pushFloat({ bond: visit.bonus })
+    }
+    if (!bonusToday) {
+      parts.push('每日见面礼:心情 +10~')
+      pushFloat({ mood: 10, bond: 5 })
+    }
     say(parts.join(' '))
     // onPet 引用稳定;只按挂载执行一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -266,7 +350,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
       }
       if (text === lastMurmur.current) return
       lastMurmur.current = text
-      say(text)
+      say(text, { prio: 1 })
     }
     window.addEventListener(MIKU_MURMUR_EVENT, onMurmur)
     return () => window.removeEventListener(MIKU_MURMUR_EVENT, onMurmur)
@@ -277,7 +361,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
     const onCelebrate = (e: Event) => {
       if (!panelVisible()) return
       const label = (e as CustomEvent).detail?.label as string | undefined
-      say(label ? `${label}完成!好厉害!` : pick(['又完成一件事,为你鼓掌!', '干得漂亮,给你比个心~']))
+      say(label ? `${label}完成!好厉害!` : pick(['又完成一件事,为你鼓掌!', '干得漂亮,给你比个心~']), { prio: 1 })
     }
     window.addEventListener(MIKU_CELEBRATE_EVENT, onCelebrate)
     return () => window.removeEventListener(MIKU_CELEBRATE_EVENT, onCelebrate)
@@ -303,15 +387,58 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
       if (document.hidden || !panelVisible() || bubbleRef.current) return
       const cur = petNow(petRef.current)
       if (cur.fullness < 25) {
-        say(pick(HUNGER_LINES))
+        say(pick(HUNGER_LINES), { prio: 1 })
         window.dispatchEvent(new CustomEvent(MIKU_PLAY_EVENT, { detail: { expression: '葱' } }))
       } else if (cur.mood < 25) {
-        say(pick(BORED_LINES))
+        say(pick(BORED_LINES), { prio: 1 })
         window.dispatchEvent(new CustomEvent(MIKU_PLAY_EVENT, { detail: { expression: '圈圈' } }))
       }
     }, 45_000)
     return () => window.clearInterval(t)
   }, [say])
+
+  // 「回来啦」:离开养成页超过 30 分钟再回来时打个招呼。纯陪伴台词不给奖励
+  // (签到/见面礼仍只在挂载时结算一次),优先级 1:忙时不出,不抢正式播报
+  const raiseHiddenAtRef = useRef(0)
+  useEffect(() => {
+    if (visible) {
+      const away = raiseHiddenAtRef.current ? Date.now() - raiseHiddenAtRef.current : 0
+      raiseHiddenAtRef.current = 0
+      if (away > 30 * 60_000) {
+        say(pick(['回来啦~我一直在这里等你哦', '欢迎回来!今天也一起加油吧', '咦,你回来啦!想你了']), { prio: 1 })
+      }
+    } else {
+      raiseHiddenAtRef.current = Date.now()
+    }
+  }, [visible, say])
+
+  // 旋转屏幕/缩放窗口后重算舞台尺寸:变化显著(>32px)时更新并换 epoch 重挂舞台
+  // ——MikuStage 内部几何量全是初始化闭包,热改尺寸极易复现沉底类 bug;重挂的
+  // 1-2s 召唤提示在旋转屏幕这种低频操作上可接受。小差异忽略,避免拖拽窗口边缘
+  // 时频繁重载
+  useEffect(() => {
+    let timer: number | null = null
+    const onResize = () => {
+      if (timer !== null) window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        timer = null
+        if (!panelVisible()) return // 隐藏期间不折腾,回屏后的 resize 会补上
+        const next = pickStageSize()
+        const prev = stageSizeRef.current
+        if (Math.abs(next.w - prev.w) <= 32 && Math.abs(next.h - prev.h) <= 32) return
+        stageSizeRef.current = next
+        setSize(next)
+        setStageEpoch((x) => x + 1)
+      }, 250)
+    }
+    window.addEventListener('resize', onResize)
+    return () => {
+      window.removeEventListener('resize', onResize)
+      if (timer !== null) window.clearTimeout(timer)
+    }
+    // panelVisible 只读 ref,行为与渲染无关
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // ---------- 舞台手势:点按=分区摸摸,长按=害羞点头,拖拽=身体摇摆 ----------
 
@@ -523,6 +650,36 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
   const cooling = (key: string) => Math.max(0, Math.ceil(((cdRef.current[key] ?? 0) - now) / 1000))
   const gameCooling = Math.max(0, Math.ceil((gameCdRef.current - now) / 1000))
 
+  // 冷却/锁定按钮的点击反馈:按钮不再用 disabled(收不到事件,触屏上完全无回应),
+  // 改 aria-disabled 保持置灰样式,点了必须有声响——锁定说解锁条件,冷却抖一抖+
+  // 节流台词(2s 内连点不刷屏)
+  const actHintAt = useRef(0)
+  const onActClick = (a: ActionDef, e: React.MouseEvent<HTMLButtonElement>) => {
+    if (!!a.unlock && !hasUnlock(lvInfo.level, a.unlock)) {
+      say(`亲密度到 Lv.${a.lock} 就能解锁「${a.label}」啦~`)
+      return
+    }
+    const isGame = a.key === 'game'
+    const left = isGame ? gameCooling : cooling(a.cdKey)
+    if (left > 0) {
+      const el = e.currentTarget
+      el.classList.remove('shake')
+      void el.offsetWidth // 强制 reflow,连续点击也重播抖动
+      el.classList.add('shake')
+      const t = Date.now()
+      if (t - actHintAt.current > 2000) {
+        actHintAt.current = t
+        say(
+          isGame
+            ? '葱还在长呢,等它一会儿嘛~'
+            : `「${a.label}」还在休息中,${left >= 60 ? `${Math.ceil(left / 60)} 分钟` : `${left} 秒`}后再来~`,
+        )
+      }
+      return
+    }
+    a.onClick()
+  }
+
   // 成就任务券:按当前互动计数实时推导各成就档位(票色与票根章位随之上走)
   const achRows = achievementView(pet)
   const achStamped = achRows.reduce((n, r) => n + Math.max(0, r.tier + 1), 0)
@@ -558,6 +715,14 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
             <i>/</i>养成
           </h2>
           <span className="raise-head-badges">
+            <button
+              className="raise-guide-btn"
+              onClick={() => setGuideOpen(true)}
+              title="怎么和 Miku 玩?看看手势指南"
+              aria-label="互动手势指南"
+            >
+              ?
+            </button>
             <button className="raise-ach-pill" onClick={() => setAchOpen(true)} title="成就任务券">
               <IconTicket />
               {achStamped}/{achTotal}
@@ -575,16 +740,26 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
 
         <div className="raise-stage-wrap" ref={stageWrapRef}>
           {bubble && (
-            <div key={bubble.id} className="raise-bubble">
+            <div key={bubble.id} className="raise-bubble" role="status">
               {bubble.ach && <AchChip k={bubble.ach.key} tier={bubble.ach.tier} />}
               {bubble.text}
             </div>
           )}
           {combo && (
-            <div key={combo.id} className={`raise-combo${combo.done ? ' done' : ''}`}>
+            <div key={combo.id} className={`raise-combo${combo.done ? ' done' : ''}`} aria-hidden="true">
               {combo.done ? '💖 比心!' : `×${combo.count}`}
             </div>
           )}
+          {floats.map((f) => (
+            <span
+              key={f.id}
+              className={`raise-float${f.neg ? ' neg' : ''}`}
+              style={{ left: `${f.x}%` }}
+              aria-hidden="true"
+            >
+              {f.text}
+            </span>
+          ))}
           {confettiAt > 0 && (
             <div className="raise-confetti" aria-hidden="true">
               {Array.from({ length: 24 }, (_, i) => (
@@ -604,6 +779,8 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
             className="raise-stage"
             ref={stageRef}
             style={{ width: size.w, height: size.h }}
+            role="button"
+            aria-label="摸摸 Miku"
             onPointerDown={onStagePointerDown}
             onPointerMove={onStagePointerMove}
             onPointerUp={onStagePointerEnd}
@@ -613,8 +790,26 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
             onDoubleClick={() => window.dispatchEvent(new CustomEvent(MIKU_QQ_EVENT))}
             title="摸摸她 · 长按摸头 · 拖一拖 · 双击变 QQ 形态"
           >
-            {!ready && !failed && <div className="raise-loading">正在召唤 Miku…</div>}
-            {failed && <div className="raise-loading">Live2D 加载失败,养成数值仍然有效</div>}
+            {!ready && !failed && (
+              <div className="raise-loading">
+                <span className="boot-spinner" aria-hidden="true" />
+                正在召唤 Miku…
+              </div>
+            )}
+            {failed && (
+              <div className="raise-loading">
+                <span>Live2D 加载失败,养成数值仍然有效</span>
+                <button
+                  className="raise-retry"
+                  onClick={() => {
+                    setFailed(false)
+                    setStageEpoch((x) => x + 1)
+                  }}
+                >
+                  重新召唤
+                </button>
+              </div>
+            )}
             {/* 离开本页即卸载:同页并存两只 Live2D 模型会毒害先创建那只的形变管线
                 (WASM 层,详见 MikuStage.onModelDead 注释),只保留最新创建的一只;
                 重进本页重载模型约 1-2 秒,期间显示召唤提示 */}
@@ -637,6 +832,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
             <span
               key={f.id}
               className="raise-food"
+              aria-hidden="true"
               style={
                 {
                   left: f.left,
@@ -649,6 +845,37 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
               {f.emoji}
             </span>
           ))}
+          {guideOpen && (
+            <div className="raise-guide" role="dialog" aria-label="互动手势指南">
+              <div className="raise-guide-title">和 Miku 玩的正确姿势</div>
+              <ul>
+                <li>
+                  <b>点一点</b>摸摸她,头顶 · 脸 · 身体反应不同
+                </li>
+                <li>
+                  <b>长按</b>害羞地摸摸头
+                </li>
+                <li>
+                  <b>拖一拖</b>身体轻轻摇摆
+                </li>
+                <li>
+                  <b>双击</b>变身 QQ 形态
+                </li>
+                <li>
+                  <b>连点 5 下</b>比心彩蛋
+                </li>
+              </ul>
+              <button
+                className="raise-guide-ok"
+                onClick={() => {
+                  setGuideOpen(false)
+                  localStorage.setItem(GUIDE_KEY, '1')
+                }}
+              >
+                知道啦
+              </button>
+            </div>
+          )}
           {gameOpen && <LeekGame onEnd={onGameEnd} />}
         </div>
 
@@ -657,7 +884,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
             <div className="raise-bar-row">
               <span className="raise-bar-label">心情</span>
               <span className="raise-bar">
-                <i className="mood" style={{ width: `${cur.mood}%` }} />
+                <i className={`mood${cur.mood < 15 ? ' low' : ''}`} style={{ width: `${cur.mood}%` }} />
               </span>
               <span className="raise-bar-val">
                 {Math.round(cur.mood)} · {moodLabel(cur.mood)}
@@ -666,7 +893,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
             <div className="raise-bar-row">
               <span className="raise-bar-label">饱食</span>
               <span className="raise-bar">
-                <i className="full" style={{ width: `${cur.fullness}%` }} />
+                <i className={`full${cur.fullness < 15 ? ' low' : ''}`} style={{ width: `${cur.fullness}%` }} />
               </span>
               <span className="raise-bar-val">
                 {Math.round(cur.fullness)} · {fullnessLabel(cur.fullness)}
@@ -714,8 +941,8 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
                 <button
                   key={a.key}
                   className={`raise-act${locked ? ' locked' : ''}`}
-                  disabled={disabled}
-                  onClick={a.onClick}
+                  aria-disabled={disabled || undefined}
+                  onClick={(e) => onActClick(a, e)}
                   title={
                     locked
                       ? `亲密度达到 Lv.${a.lock} 解锁`

@@ -451,6 +451,20 @@ export default function App() {
     return { left: Math.round(left), bottom }
   }
 
+  // 在悬浮球头顶冒一句指定台词的气泡(闲置碎碎念与首次就绪引导共用);聊天窗/
+  // 菜单开着或正在养成页时不出(位置会叠/那边由页面气泡接管)
+  const showFabMurmur = (text: string, ms = 5000) => {
+    if (fabChatOpen || mikuMenu || viewRef.current === 'raise') return
+    const r = fabRef.current?.getBoundingClientRect()
+    const fab = r
+      ? { right: r.right, top: window.innerHeight - (fabPosRef.current?.bottom ?? 30) - r.height }
+      : null
+    setMurmurPos(anchorFabChat(fab, 240))
+    setMurmur({ id: Date.now() + Math.random(), text })
+    if (murmurTimer.current !== null) window.clearTimeout(murmurTimer.current)
+    murmurTimer.current = window.setTimeout(() => setMurmur(null), ms)
+  }
+
   const toggleFabChat = () => {
     if (fabChatOpen) {
       setFabChatOpen(false)
@@ -595,14 +609,7 @@ export default function App() {
       for (let i = 0; i < 3 && text === lastMurmur.current; i++) text = makeMurmurLine(dataRef.current)
       if (text === lastMurmur.current) return
       lastMurmur.current = text
-      const r = fabRef.current?.getBoundingClientRect()
-      const fab = r
-        ? { right: r.right, top: window.innerHeight - (fabPosRef.current?.bottom ?? 30) - r.height }
-        : null
-      setMurmurPos(anchorFabChat(fab, 240))
-      setMurmur({ id: Date.now(), text })
-      if (murmurTimer.current !== null) window.clearTimeout(murmurTimer.current)
-      murmurTimer.current = window.setTimeout(() => setMurmur(null), 5000)
+      showFabMurmur(text)
     }
     window.addEventListener(MIKU_MURMUR_EVENT, onMurmur)
     return () => window.removeEventListener(MIKU_MURMUR_EVENT, onMurmur)
@@ -640,6 +647,23 @@ export default function App() {
         window.clearTimeout(fabPopTimer.current)
         fabPopTimer.current = null
       }
+    }
+    // 进养成页时悬浮球整体卸载(单存活模型):同步复位就绪标记,否则回到其他页
+    // 后的 1-2s 重载窗口里按钮是看不见的透明空盒(星星占位被就绪标记挡住不再渲染)
+    if (view === 'raise') setMikuReady(false)
+  }, [view])
+
+  // 视图切换过渡:board 与养成页容器重触发入场动画。面板常驻挂载不能靠换 key
+  // 重建(会丢全部面板内部状态),用「移除类→强制 reflow→再加回」重播 keyframes。
+  // 首次挂载也会跑一次,当作应用入场
+  const boardRef = useRef<HTMLDivElement>(null)
+  const raisePageRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    for (const el of [boardRef.current, raisePageRef.current]) {
+      if (!el) continue
+      el.classList.remove('view-anim')
+      void el.offsetWidth
+      el.classList.add('view-anim')
     }
   }, [view])
 
@@ -1096,7 +1120,13 @@ export default function App() {
 
   // ---------- 登录门控:未登录只渲染登录页,其余一概不挂载 ----------
 
-  if (authChecking) return <div className="center-hint">加载中…</div>
+  if (authChecking)
+    return (
+      <div className="center-hint">
+        <span className="boot-spinner" aria-hidden="true" />
+        <p>加载中…</p>
+      </div>
+    )
   if (!authUser) return <LoginView onAuthed={handleAuthed} />
 
   if (loadError) {
@@ -1109,7 +1139,13 @@ export default function App() {
       </div>
     )
   }
-  if (!data) return <div className="center-hint">加载中…</div>
+  if (!data)
+    return (
+      <div className="center-hint">
+        <span className="boot-spinner" aria-hidden="true" />
+        <p>加载中…</p>
+      </div>
+    )
 
   // 首次进入养成页时标记(渲染期调整 state,立即重渲染挂载养成面板,避免空一帧);
   // 之后该面板常驻,切换视图只做显示/隐藏
@@ -1535,7 +1571,7 @@ export default function App() {
           }
 
           return (
-            <div className={`board v-${view}`}>
+            <div ref={boardRef} className={`board v-${view}`}>
               {viewRows.map((row, ri) => (
                 <div
                   key={ri}
@@ -1557,7 +1593,7 @@ export default function App() {
         {/* Miku 养成页:独立于面板网格(避免网格重排把大舞台拆了重挂),首次进入后
             常驻挂载、离开仅隐藏;进入本页时右下角悬浮球卸载——两处舞台不并存
             (双 Live2D 模型会毒害先建那只的形变管线),离开后悬浮球重载约 1-2 秒 */}
-        <div className={`raise-page${view === 'raise' ? '' : ' hidden'}`}>
+        <div ref={raisePageRef} className={`raise-page${view === 'raise' ? '' : ' hidden'}`}>
           {raiseVisited && petLoaded && (
             <MikuRaisePanel
               data={data}
@@ -1582,9 +1618,9 @@ export default function App() {
         {!mikuHidden && view !== 'raise' && (
           <button
             ref={fabRef}
-            className={`ai-fab ${fabDragging ? 'dragging' : ''} ${mikuReady && !mikuFailed ? 'miku-fab' : ''} ${
+            className={`ai-fab ${fabDragging ? 'dragging' : ''} ${!mikuFailed ? 'miku-fab' : ''} ${
               mikuQQ ? 'miku-qq' : ''
-            }`}
+            } ${!mikuReady && !mikuFailed ? 'miku-loading' : ''}`}
             style={
               {
                 right: fabPos?.right,
@@ -1594,7 +1630,11 @@ export default function App() {
                 '--miku-scale': mikuScale,
               } as CSSProperties
             }
-            title="Miku · 右键更多 · 拖动可换位置"
+            title={
+              mikuReady && !mikuFailed
+                ? 'Miku · 右键更多 · 拖动可换位置'
+                : 'Miku 正在赶来…'
+            }
             onPointerDown={onFabPointerDown}
             onPointerMove={onFabPointerMove}
             onPointerUp={endFabDrag}
@@ -1648,7 +1688,15 @@ export default function App() {
             {!mikuFailed && (
               <MikuStage
                 key={fabModelEpoch}
-                onReady={() => setMikuReady(true)}
+                onReady={() => {
+                  setMikuReady(true)
+                  // 首次就绪的一次性手势提示(触屏上没有 title 可悬停):
+                  // 复用碎碎念气泡冒 5 秒,标记写 localStorage 不再打扰
+                  if (!localStorage.getItem('miku.fab.greet.v1')) {
+                    localStorage.setItem('miku.fab.greet.v1', '1')
+                    showFabMurmur('点我聊天 · 双击变 Q · 长按更多')
+                  }
+                }}
                 onFailed={() => setMikuFailed(true)}
                 onQQChange={setMikuQQ}
                 qqOn={mikuQQ}
@@ -1657,7 +1705,8 @@ export default function App() {
                 idleEnabled={mikuIdle}
               />
             )}
-            {/* 加载中先露星星占位,Miku 就绪后由 CSS 类切换按钮尺寸并隐藏图标 */}
+            {/* 加载中露星星占位(呼吸动画),Miku 就绪后由 CSS 类切换隐藏并登场 */}
+            {!mikuReady && <IconAi />}
             {!mikuReady && <IconAi />}
           </button>
         )}

@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import * as PIXI from 'pixi.js'
 import type { Live2DModel as Live2DModelInstance } from 'pixi-live2d-display/cubism4'
 
@@ -244,6 +244,9 @@ function MikuStageInner(
   const hostRef = useRef<HTMLDivElement>(null)
   const modelRef = useRef<Live2DModelInstance | null>(null)
   const readyRef = useRef(false)
+  // 就绪镜像:驱动 CSS 登场动画(模型挂上舞台的一瞬 canvas 从透明空帧变为有内容,
+  // 加类重触发 keyframes,两个舞台变体共用)
+  const [ready, setReady] = useState(false)
   // 舞台几何(QQ 偏移按舞台高度比例缩放):挂载后不变,供初始化与事件处理器闭包使用
   const qqShift = qqShiftFor(height)
   const basePosNormal = { x: width / 2, y: height }
@@ -904,6 +907,7 @@ function MikuStageInner(
         }
         app.ticker.add(onTick)
         readyRef.current = true
+        setReady(true)
         // 加载期间外部 QQ 状态可能已变化(如养成页先变形、本实例模型后就绪):
         // 就绪即对齐,避免「菜单勾着、立绘却是普通形态」
         if (qqOnRef.current !== undefined && (qqOnRef.current ? 1 : 0) !== qqTargetRef.current) {
@@ -1256,7 +1260,7 @@ function MikuStageInner(
   return (
     <div
       ref={hostRef}
-      className={`miku-stage${variant === 'page' ? ' page' : ''}`}
+      className={`miku-stage${variant === 'page' ? ' page' : ''}${ready ? ' ready' : ''}`}
       style={{ width, height }}
       aria-hidden="true"
     />
