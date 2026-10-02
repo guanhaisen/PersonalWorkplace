@@ -365,6 +365,9 @@ export default function App() {
   // Miku Live2D 悬浮球:加载成功前按钮保持星星图标,失败后永久回退图标
   const [mikuReady, setMikuReady] = useState(false)
   const [mikuFailed, setMikuFailed] = useState(false)
+  // 模型网格失能自愈:同页双 Live2D 模型会毒害先建那只的形变管线(机制见
+  // MikuStage 的 onModelDead 注释),换 key 重挂换一只新模型,就绪即对齐当前形态
+  const [fabModelEpoch, setFabModelEpoch] = useState(0)
   // QQ 人形态:按钮盒与拖动钳制范围随之缩小;仅本会话内保持,刷新回默认原形
   const [mikuQQ, setMikuQQ] = useState(false)
   // 保留动作(右键菜单「动作」选的表情/舞蹈):本会话内一直保持、不自动复原;
@@ -505,7 +508,10 @@ export default function App() {
     if (!d) return
     const dx = e.clientX - d.startX
     const dy = e.clientY - d.startY
-    if (!fabMoved.current && Math.hypot(dx, dy) < 5) return
+    // 触屏拖动激活阈值放宽到 14px:手指点按天然带几像素晃动,5px 会把轻点误判
+    // 成拖拽——点击被吞、按钮被拽走几像素,双击也就断了;鼠标精度高维持 5px
+    const dragThreshold = e.pointerType === 'touch' ? 14 : 5
+    if (!fabMoved.current && Math.hypot(dx, dy) < dragThreshold) return
     if (!fabMoved.current) {
       if (fabHeld.current) return // 长按已弹出菜单:手指残留的移动不再激活拖动
       // 拖动激活:作废还没触发的长按
@@ -1549,7 +1555,8 @@ export default function App() {
         })()}
 
         {/* Miku 养成页:独立于面板网格(避免网格重排把大舞台拆了重挂),首次进入后
-            常驻挂载、离开仅隐藏;进入本页时右下角悬浮球隐藏(大舞台就是她本人) */}
+            常驻挂载、离开仅隐藏;进入本页时右下角悬浮球卸载——两处舞台不并存
+            (双 Live2D 模型会毒害先建那只的形变管线),离开后悬浮球重载约 1-2 秒 */}
         <div className={`raise-page${view === 'raise' ? '' : ' hidden'}`}>
           {raiseVisited && petLoaded && (
             <MikuRaisePanel
@@ -1558,17 +1565,21 @@ export default function App() {
               onPet={onPet}
               mikuAction={mikuAction}
               mikuQQ={mikuQQ}
+              onQQChange={setMikuQQ}
               playMiku={playMiku}
               emoteOn={emoteOn}
               toggleEmote={toggleEmote}
               clearEmotes={clearEmotes}
+              visible={view === 'raise'}
             />
           )}
         </div>
 
-        {/* 右下角:Miku 快捷入口(Live2D),全页面常驻;可拖动,点击弹出就地聊天窗,
-            右键打开桌宠菜单;「隐藏她」后经 ⌘K 命令面板唤回 */}
-        {!mikuHidden && (
+        {/* 右下角:Miku 快捷入口(Live2D),可拖动,点击弹出就地聊天窗,
+            右键打开桌宠菜单;「隐藏她」后经 ⌘K 命令面板唤回。
+            养成页时不渲染:两处舞台不并存(双 Live2D 模型会毒害先建那只的
+            形变管线),回总览后悬浮球重载约 1-2 秒 */}
+        {!mikuHidden && view !== 'raise' && (
           <button
             ref={fabRef}
             className={`ai-fab ${fabDragging ? 'dragging' : ''} ${mikuReady && !mikuFailed ? 'miku-fab' : ''} ${
@@ -1578,9 +1589,7 @@ export default function App() {
               {
                 right: fabPos?.right,
                 // 未拖动过时 fabPos 为空,30 与 .ai-fab 的 CSS 默认 bottom 一致;
-                // 键盘顶起时整体上移 kb.lift,不改 fabPos 本身;
-                // 养成页上大舞台就是她本人,悬浮球退场(display:none 而非卸载,避免 Live2D 重载)
-                display: view === 'raise' ? 'none' : undefined,
+                // 键盘顶起时整体上移 kb.lift,不改 fabPos 本身
                 bottom: (fabPos?.bottom ?? 30) + (kb?.lift ?? 0),
                 '--miku-scale': mikuScale,
               } as CSSProperties
@@ -1635,11 +1644,15 @@ export default function App() {
               window.dispatchEvent(new CustomEvent(MIKU_QQ_EVENT))
             }}
           >
+            {/* Miku Live2D 舞台;养成页时本按钮整体卸载,回总览后随组件重建 */}
             {!mikuFailed && (
               <MikuStage
+                key={fabModelEpoch}
                 onReady={() => setMikuReady(true)}
                 onFailed={() => setMikuFailed(true)}
                 onQQChange={setMikuQQ}
+                qqOn={mikuQQ}
+                onModelDead={() => setFabModelEpoch((x) => x + 1)}
                 eyeFollow={mikuEye}
                 idleEnabled={mikuIdle}
               />

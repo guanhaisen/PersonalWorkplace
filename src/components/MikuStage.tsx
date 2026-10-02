@@ -154,6 +154,11 @@ function patchCrossContextShaderCache(Live2DModelCtor: { prototype: any }) {
       ;(this as unknown as { glContextID: number }).glContextID = -1
     }
     lastUid = renderer.CONTEXT_UID
+    // deltaTime 由共享 ticker 持续累积、只在渲染时被消费:舞台隐藏(渲染停摆)越久,
+    // 恢复后首帧灌给动作/物理系统的 dt 越大,会造成模型瞬移/物理爆开。钳到单帧
+    // 量级;正常掉帧(≤200ms)不受影响
+    const m = this as unknown as { deltaTime: number }
+    if (m.deltaTime > 200) m.deltaTime = 16.7
     origRender.call(this, renderer)
   }
 }
@@ -187,6 +192,28 @@ interface Props {
   height?: number
   /** fab = 悬浮球内(page 变体仅影响类名,定位由外层容器负责) */
   variant?: 'fab' | 'page'
+  /**
+   * 全局 QQ 人形态开关(App 的 mikuQQ,单真源)。同页双舞台 + 右键菜单/养成页
+   * 动作组共用这个状态:任何一处切换后,另一个舞台(哪怕正 display:none 隐藏)
+   * 也必须跟随,否则换页会出现「小按钮盒里站着普通立绘」的错位——立绘大半溢出
+   * 可点区域(pointer-events:none),怎么双击都点不到。undefined = 不参与同步
+   */
+  qqOn?: boolean
+  /**
+   * 渲染主开关:父组件知道本舞台何时被 display:none 隐藏(切页/悬浮球退场),
+   * 直接据此启停渲染循环。不能只靠 IntersectionObserver:它的回调在「浏览器绘制
+   * 帧」时才生成,display:none 恢复后偶发不派发(实测画布冻结成隐藏前最后一帧,
+   * 此后双击变 QQ 等一切视觉变化全部无效);React 状态提交是确定性的,切页瞬间
+   * 生效。IO 仍保留,兜「挂载着但被滚动出视口」的情形
+   */
+  visible?: boolean
+  /**
+   * 模型网格失能报警:pixi-live2d-display 在同页第二只模型出现后,会让先创建的
+   * 那只模型的参数→网格形变管线静默失效(参数照常写、update 照常跑、顶点纹丝
+   * 不动,WASM 层原因未明)。变 Q 后若轮廓没有按预期收缩即判定中招,父级应重挂
+   * 本组件(换 key)换一只新模型自愈
+   */
+  onModelDead?: () => void
 }
 
 /** 通过 ref 暴露给外层的能力:查询当前形态的嘴部锚点(画布内逻辑坐标) */
@@ -205,9 +232,15 @@ function MikuStageInner(
     width = STAGE_W,
     height = STAGE_H,
     variant = 'fab',
+    qqOn,
+    visible = true,
+    onModelDead,
   }: Props,
   ref: React.Ref<MikuStageApi>,
 ) {
+  // 外部 QQ 状态的渲染期镜像:init 完成时模型可能晚于状态变化才就绪,就绪对齐要读最新值
+  const qqOnRef = useRef<boolean | undefined>(qqOn)
+  qqOnRef.current = qqOn
   const hostRef = useRef<HTMLDivElement>(null)
   const modelRef = useRef<Live2DModelInstance | null>(null)
   const readyRef = useRef(false)
@@ -347,6 +380,97 @@ function MikuStageInner(
     [scanSilhouette],
   )
 
+  // QQ 形态进出:参数档 + 支点平移 + 弹跳;notify=false 表示由外部状态(App 的
+  // qqOn)驱动,不回写 onQQChange。隐藏中的实例也要跟随开关(只更新内部状态,
+  // 画面等恢复渲染后自然收敛):两个舞台与右键菜单/养成页动作组共用同一个全局
+  // 开关,任何一处切换后另一处都必须一致,否则换页会出现「小按钮盒里站着普通
+  // 立绘」的错位——立绘大半溢出可点区域(pointer-events:none),怎么双击都点不到
+  // 测量轮次号:每次进入 QQ 形态递增,旧测量循环据「epoch 不再相等」整体作废
+  const qqMeasureEpochRef = useRef(0)
+  // 变 Q 前的轮廓宽度(CSS px,可见时才采集):供「网格失能」检测对比。
+  // 宽度比高度可靠——沉底的死亡形态被画布裁掉下半身,可见高度反而变矮,
+  // 宽度却仍是普通姿态的原值;健康的 morph 宽度收到约 40%,死亡则基本不变
+  const preMorphWidthRef = useRef<number | null>(null)
+  const meshDeadReportedRef = useRef(false)
+  const onModelDeadRef = useRef(onModelDead)
+  onModelDeadRef.current = onModelDead
+  const applyQQ = (entering: boolean, notify: boolean) => {
+    qqTargetRef.current = entering ? 1 : 0
+    const base = entering ? basePosQQ : basePosNormal
+    const off = entering ? qqOffsetRef.current ?? 0 : normalOffsetRef.current
+    basePosTargetRef.current = {
+      x: base.x + off,
+      y: base.y + (entering ? qqOffsetYRef.current : 0),
+    }
+    bounceAtRef.current = performance.now()
+    if (entering) {
+      // 可见时才采得到:scanSilhouette 读的是已渲染像素,刚进 QQ 的支点平移
+      // 尚未渲染,此刻轮廓即「普通形态」的宽度基准
+      const sil = stageVisible() ? scanSilhouette() : null
+      preMorphWidthRef.current = sil
+        ? (sil.maxX - sil.minX) / (appRef.current?.renderer.resolution || 1)
+        : null
+    }
+    if (notify) onQQChange?.(entering)
+    if (entering) scheduleQQMeasure(++qqMeasureEpochRef.current)
+  }
+  const applyQQRef = useRef(applyQQ)
+  applyQQRef.current = applyQQ
+
+  // 变形完成(约 200ms)且庆祝弹跳结束(0.5s)后实测 Q 版轮廓:水平居中偏移与
+  // 「脚底到画布底的间隙」都按实测修正——x 补偿按悬浮球标定,大舞台上按比例放大
+  // 后仍会偏;y 的固定标定量同样会漂。实测缓存后再次切换直接复用,不再滑动
+  const scheduleQQMeasure = (epoch: number, attempt = 0) => {
+    window.setTimeout(() => {
+      // 卸载后 appRef 已置空,scanSilhouette 返回 null 自然跳过;单帧回读有撞上
+      // 半帧的风险,修正量超画布宽 20% 视为垃圾放弃
+      if (qqTargetRef.current !== 1) return
+      if (epoch !== qqMeasureEpochRef.current) return // 期间又切了一次形态:本轮作废
+      if (!stageVisible()) return // 隐藏画布读到的是陈旧帧,量出的全是垃圾
+      // 变形 tween 与庆祝弹跳只在渲染帧上推进:两者任一未归位,说明形态还没定格
+      // (RAF 被节流/遮挡时 600ms 内可能一帧都没画),此刻回读到的是瞬态帧,
+      // 量出的间隙会把 qqOffsetY 永久污染(缓存整个会话,之后每次变 Q 都沉底
+      // ——实测 RAF 1.5s 一帧时必现)。未定格就重试;始终定格不了(渲染彻底
+      // 停摆)则放弃,保留标定默认值,好过写入垃圾
+      if (qqLevelRef.current !== 1 || bounceAtRef.current !== null) {
+        // 60 次预算:RAF 被节流到 1.5s/帧时 settle 约需 20s;渲染彻底停摆则
+        // 放弃并保留标定默认值,好过写入垃圾
+        if (attempt < 60) scheduleQQMeasure(epoch, attempt + 1)
+        return
+      }
+      const app = appRef.current
+      const sil = scanSilhouette()
+      if (!app || !sil) return
+      // 网格失能检测:参数档已定格在 1,轮廓宽度却几乎没收缩——参数→网格管线
+      // 已被同页第二只模型毒害(机制见 props.onModelDead 注释;用宽度不用高度,
+      // 因为沉底的死亡形态会被画布裁掉下半身,高度反而变矮)。上报父级重挂自愈;
+      // 死模型上量出的偏移全是垃圾,本轮到此为止
+      const silWidth = (sil.maxX - sil.minX) / app.renderer.resolution
+      if (
+        !meshDeadReportedRef.current &&
+        preMorphWidthRef.current !== null &&
+        silWidth > preMorphWidthRef.current * 0.75
+      ) {
+        meshDeadReportedRef.current = true
+        onModelDeadRef.current?.()
+        return
+      }
+      const dx = measureCenterDx()
+      if (dx && Math.abs(dx) <= width * 0.2) {
+        qqOffsetRef.current = (qqOffsetRef.current ?? 0) + dx
+        basePosTargetRef.current.x += dx
+      }
+      // 纵向自愈:GL 坐标 y 向上,sil.minY = 最低不透明像素(脚底)离画布底的间隙
+      // ——理论上应为 0(站回容器底沿),不为零说明标定量在这个舞台尺寸上漂了,
+      // 按间隙下沉;正确时为零不动作。量级钳制兜底瞬态
+      const gapY = sil.minY / app.renderer.resolution
+      if (gapY > 1.5 && gapY < height * 0.5) {
+        qqOffsetYRef.current += gapY
+        basePosTargetRef.current.y += gapY
+      }
+    }, attempt === 0 ? 600 : 1000)
+  }
+
   // 临时表情结束后的复原:有保留动作则回到她(舞蹈保留回葱表情),否则完全复位
   const restoreExpressionSafe = () => {
     try {
@@ -465,13 +589,23 @@ function MikuStageInner(
     let model: Live2DModelInstance | null = null
 
     // 调试句柄:白天可验证夜晚困困模式(window.__mikuDebug.setNight(true/false));
-    // tick() 手动推一帧 PIXI ticker——遮挡/后台页面 RAF 暂停时验证摆动等帧逻辑用
-    ;(window as unknown as Record<string, unknown>).__mikuDebug = {
-      setNight: (v: boolean) => {
-        nightRef.current = v
-      },
-      tick: () => app?.ticker.update(),
+    // tick() 手动推一帧本舞台的 PIXI ticker——遮挡/后台页面 RAF 暂停时验证摆动等
+    // 帧逻辑用(同页多舞台时以最后挂载者为准);stages 按变体保留全部舞台实例,
+    // 可对指定舞台手动推帧,如 __mikuDebug.stages.fab.ticker.update()
+    const win = window as unknown as Record<string, unknown>
+    const debug = (win.__mikuDebug ??= {
+      stages: {} as Record<string, PIXI.Application | null>,
+      models: {} as Record<string, Live2DModelInstance | null>,
+    }) as {
+      setNight: (v: boolean) => void
+      tick: () => void
+      stages: Record<string, PIXI.Application | null>
+      models: Record<string, Live2DModelInstance | null>
     }
+    debug.setNight = (v: boolean) => {
+      nightRef.current = v
+    }
+    debug.tick = () => app?.ticker.update()
 
     void (async () => {
       try {
@@ -510,8 +644,15 @@ function MikuStageInner(
           return
         }
         modelRef.current = model
-        // 控制台调试句柄:可手动 model.expression('比心') 等
+        // 控制台调试句柄:可手动 model.expression('比心') 等(多舞台时为最后挂载者)
         ;(window as unknown as Record<string, unknown>).__miku = model
+        const debugNow = (window as unknown as Record<string, unknown>).__mikuDebug as
+          | { stages: Record<string, PIXI.Application | null>; models: Record<string, Live2DModelInstance | null> }
+          | undefined
+        if (debugNow) {
+          debugNow.stages[variant] = app
+          debugNow.models[variant] = model
+        }
         // 整身放入容器:底部居中,留一点余量防止触边裁切
         model.anchor.set(0.5, 1)
         const s = Math.min(width / model.width, height / model.height) * 0.96
@@ -683,6 +824,19 @@ function MikuStageInner(
               core.setParameterValueById(id, 1)
             }
           }
+          // QQ 形态参数档:每帧渲染都无条件写。这个钩子挂在 internalModel.update
+          // 尾部,而后者只在「真正渲染」时被 Live2DModel._render 调用(共享 ticker
+          // 的 autoUpdate 只累积 deltaTime),所以写入天然与渲染同频:舞台隐藏时
+          // 不写也不渲染,无副作用;恢复渲染后 tween 从当前档位继续走完,几帧内
+          // 即是完整目标形态。写在 origUpdate 之后是硬要求——本帧 loadParameters
+          // 会把参数恢复到快照,写在它前面会被同帧抹掉
+          const lv = qqLevelRef.current
+          const target = qqTargetRef.current
+          if (lv !== target) {
+            qqLevelRef.current = lv + Math.sign(target - lv) * Math.min(0.09, Math.abs(target - lv))
+          }
+          core.setParameterValueById('Param131', qqLevelRef.current)
+          core.setParameterValueById('Param136', qqLevelRef.current)
         }
         // 每帧特效:拖动/挠痒痒/思考的摆动 + 弹跳弹簧(摆动互斥,弹跳独立)
         const onTick = () => {
@@ -731,16 +885,9 @@ function MikuStageInner(
               mm.position.y = groundY - hop
             }
           }
-          // QQ 形态过渡:参数档与支点位置同步滑向目标(约 0.2s),写作者的 QQ人 参数档
-          const lv = qqLevelRef.current
-          const target = qqTargetRef.current
-          if (lv !== target) {
-            const next = lv + Math.sign(target - lv) * Math.min(0.09, Math.abs(target - lv))
-            qqLevelRef.current = next
-            const core = mm.internalModel.coreModel as ParamWriter
-            core.setParameterValueById('Param131', next)
-            core.setParameterValueById('Param136', next)
-          }
+          // QQ 形态的参数档写入在 internal.update 尾部钩子(每次渲染各写一次,
+          // 见上):支点平移在这里(app.ticker)做,tween 与参数写在那边做,
+          // 两者都只在渲染时推进,恢复渲染后同步收敛
           const bp = basePosRef.current
           const bpTarget = basePosTargetRef.current
           if (bp.x !== bpTarget.x || bp.y !== bpTarget.y) {
@@ -757,6 +904,11 @@ function MikuStageInner(
         }
         app.ticker.add(onTick)
         readyRef.current = true
+        // 加载期间外部 QQ 状态可能已变化(如养成页先变形、本实例模型后就绪):
+        // 就绪即对齐,避免「菜单勾着、立绘却是普通形态」
+        if (qqOnRef.current !== undefined && (qqOnRef.current ? 1 : 0) !== qqTargetRef.current) {
+          applyQQRef.current?.(qqOnRef.current, false)
+        }
         onReady?.()
       } catch (err) {
         console.warn('[miku] Live2D 初始化失败,回退为图标', err)
@@ -774,7 +926,18 @@ function MikuStageInner(
         centeringTimerRef.current = null
       }
       delete (window as unknown as Record<string, unknown>).__miku
-      delete (window as unknown as Record<string, unknown>).__mikuDebug
+      // 调试句柄只摘本舞台条目:同页另一舞台的 stages/models 还在用;全空才整个删掉
+      const winCleanup = window as unknown as Record<string, unknown>
+      const debugCleanup = winCleanup.__mikuDebug as
+        | { stages?: Record<string, unknown>; models?: Record<string, unknown> }
+        | undefined
+      if (debugCleanup?.stages && debugCleanup.models) {
+        delete debugCleanup.stages[variant]
+        delete debugCleanup.models[variant]
+        if (Object.keys(debugCleanup.stages).length === 0) delete winCleanup.__mikuDebug
+      } else {
+        delete winCleanup.__mikuDebug
+      }
       window.clearTimeout(expressionTimerRef.current)
       window.clearTimeout(danceLoopTimerRef.current)
       model?.destroy({ children: true, texture: true, baseTexture: true })
@@ -789,7 +952,9 @@ function MikuStageInner(
   }, [])
 
   // 离屏暂停:display:none(切走养成页/隐藏悬浮球)时停掉渲染 ticker,回屏再恢复。
-  // Live2D 的参数更新挂在共享 ticker 上不受影响,只是不再画——回来时动作是时间驱动的,自然衔接
+  // 恢复主要靠下面的 visible prop(IO 回调偶发不派发,不能独自承担恢复职责);
+  // 这里兜「挂载着但被滚动出视口」的省电暂停。停画期间共享 ticker 只是累积
+  // deltaTime 不消费,恢复渲染首帧的巨额 dt 由 _render 补丁钳制(见文件头部)
   useEffect(() => {
     const el = hostRef.current
     if (!el || typeof IntersectionObserver === 'undefined') return
@@ -806,6 +971,28 @@ function MikuStageInner(
     io.observe(el)
     return () => io.disconnect()
   }, [])
+
+  // 渲染主开关:父组件按切页状态确定性启停渲染循环(见 props.visible 注释)。
+  // 挂载早期 appRef 还没就绪:先把 onScreenRef 记下,初始化代码会按它决定
+  // 「以暂停态起步」;之后再翻转到可见也无需补 start,初始化本身就会跑起来
+  useEffect(() => {
+    onScreenRef.current = visible
+    const app = appRef.current
+    if (!app) return
+    if (visible) {
+      if (!app.ticker.started) app.ticker.start()
+    } else {
+      app.ticker.stop()
+    }
+  }, [visible])
+
+  // 全局 QQ 状态 → 本舞台跟随:qqOn 变化时对齐(隐藏中的实例也在内)。本舞台刚经
+  // 事件 morph 并回写过状态时,这里自然命中「已一致」零操作,不会来回抖
+  useEffect(() => {
+    if (qqOn === undefined || !readyRef.current) return
+    if ((qqTargetRef.current === 1) !== qqOn) applyQQRef.current(qqOn, false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qqOn])
 
   // 夜晚困困模式开关:按本地小时每分钟轮询(21:00–06:00),调试可用 __mikuDebug.setNight 覆盖
   useEffect(() => {
@@ -914,44 +1101,15 @@ function MikuStageInner(
     }
     // 双击切换 QQ 人形态:持续参数档,进出都带弹跳;变身后不受表情复位影响。
     // 同时平滑平移模型支点(站回按钮底沿)并通知外层缩放按钮盒。
+    // 双击切换 QQ 人形态:本舞台可见时由事件驱动并回写全局状态(onQQChange),
+    // 隐藏中的另一个舞台经 qqOn 属性跟随(见 applyQQ 与同步 effect)
     const onQQ = () => {
       if (!stageVisible() || !readyRef.current) return
-      const entering = qqTargetRef.current === 0
-      qqTargetRef.current = entering ? 1 : 0
-      const base = entering ? basePosQQ : basePosNormal
-      const off = entering ? qqOffsetRef.current ?? 0 : normalOffsetRef.current
-      basePosTargetRef.current = {
-        x: base.x + off,
-        y: base.y + (entering ? qqOffsetYRef.current : 0),
-      }
-      bounceAtRef.current = performance.now()
-      onQQChange?.(entering)
-      if (entering) {
-        // 变形完成(约 200ms)且庆祝弹跳结束(0.5s)后实测 Q 版轮廓居中偏移:
-        // QQ 的 x 补偿按悬浮球标定,大舞台上按比例放大后仍会偏;实测缓存后
-        // 再次切换直接复用,不再滑动
-        window.setTimeout(() => {
-          // 卸载后 measureCenterDx 因 appRef 已置空而返回 null,无需 disposed 守卫;
-          // 单帧回读有撞上半帧的风险,修正量超画布宽 20% 视为垃圾放弃
-          if (qqTargetRef.current !== 1) return
-          const app = appRef.current
-          const sil = scanSilhouette()
-          if (!app || !sil) return
-          const dx = measureCenterDx()
-          if (dx && Math.abs(dx) <= width * 0.2) {
-            qqOffsetRef.current = (qqOffsetRef.current ?? 0) + dx
-            basePosTargetRef.current.x += dx
-          }
-          // 纵向自愈:GL 坐标 y 向上,sil.minY = 最低不透明像素(脚底)离画布底的
-          // 间隙——理论上应为 0(站回容器底沿),实测不为零说明标定量在这个
-          // 舞台尺寸上漂了,按间隙下沉;正确时为零不动作。量级钳制兜底瞬态
-          const gapY = sil.minY / app.renderer.resolution
-          if (gapY > 1.5 && gapY < height * 0.5) {
-            qqOffsetYRef.current += gapY
-            basePosTargetRef.current.y += gapY
-          }
-        }, 600)
-      }
+      // 兜底拉起渲染循环:start() 幂等。可见性判定已通过而渲染仍停着的情况
+      // (历史上 IO 丢回调)曾让双击后画布冻结在旧帧、看起来毫无反应
+      const app = appRef.current
+      if (app && !app.ticker.started) app.ticker.start()
+      applyQQRef.current(qqTargetRef.current === 0, true)
     }
     const onThinking = (e: Event) => {
       if (!stageVisible()) return

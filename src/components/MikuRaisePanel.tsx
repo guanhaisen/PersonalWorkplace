@@ -1,7 +1,8 @@
 // Miku 养成页:大舞台 + 亲密度/心情/饱食度 + 互动按钮,只展示 Miku 本人(聊天走
 // 「Miku」页或悬浮球快捷弹窗)。与悬浮球共用同一个 MikuStage 组件(传大尺寸、page
-// 变体);同一时刻两个实例只有可见的那个响应互动事件(见 MikuStage 的可见性静默),
-// 进入本页时 App 会隐藏悬浮球。数值模型在 ../mikuPet;存档经 App 的 onPet 防抖写 /api/settings。
+// 变体);两处舞台不同时渲染——进入本页时 App 会卸载悬浮球,离开本页时本舞台也随之
+// 卸载(单存活模型:双模型并存会毒害先建那只的形变管线,代价是每次进入重载 1-2 秒)。
+// 数值模型在 ../mikuPet;存档经 App 的 onPet 防抖写 /api/settings。
 // 互动增强:投喂飞食动画+咀嚼口型、舞台拖拽摇摆、连击浮标、长按摸头(眯眼+点头)、
 // 时段×状态问候与主动撒娇、连续来访签到、升级撒花、等级解锁互动、成就任务券
 // (侧栏摘要+浮层,方向B定稿见 miku-badges/direction-approved.md)、接大葱小游戏。
@@ -52,6 +53,8 @@ interface Props {
   mikuAction: string | null
   /** QQ 人形态是否开启(与右键菜单同源) */
   mikuQQ: boolean
+  /** 本页大舞台切换 QQ 形态后回写全局状态(悬浮球/右键菜单跟随) */
+  onQQChange?: (on: boolean) => void
   /** 选择/取消保留动作(App 统一派发,菜单与本栏共享) */
   playMiku: (expression: string | null, talkMs?: number) => void
   /** 可叠加表情(脸红/圈圈/前倾,参数独立可同时生效) */
@@ -59,6 +62,8 @@ interface Props {
   toggleEmote: (name: string) => void
   /** 恢复默认:清空可叠加组 + 解除手部三选一 */
   clearEmotes: () => void
+  /** 本页是否可见(切页即 display:none):透传给大舞台做渲染循环的确定性启停 */
+  visible?: boolean
 }
 
 // 舞台尺寸按视口在挂载时定一次(中途旋转/缩放窗口不重建画布,CSS 层面整体等比即可)
@@ -103,7 +108,7 @@ interface FlyingFood {
   dy: number
 }
 
-export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, playMiku, emoteOn, toggleEmote, clearEmotes }: Props) {
+export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, onQQChange, playMiku, emoteOn, toggleEmote, clearEmotes, visible = true }: Props) {
   const [size] = useState(pickStageSize)
   const [ready, setReady] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -119,6 +124,14 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, p
   const [achOpen, setAchOpen] = useState(false)
   // 移动端侧栏的分组 Tab(桌面两栏并排展示,Tab 条由 CSS 隐藏)
   const [mobileTab, setMobileTab] = useState<'actions' | 'emotes'>('actions')
+  // 模型网格失能自愈(同页双模型毒害先建那只,见 MikuStage.onModelDead 注释)
+  const [stageEpoch, setStageEpoch] = useState(0)
+
+  // 离开本页时大舞台随之卸载(单存活模型策略),重进需重载模型:复位 ready,
+  // 让「正在召唤 Miku…」提示重新出现
+  useEffect(() => {
+    if (!visible) setReady(false)
+  }, [visible])
   const comboTimer = useRef<number | null>(null)
   const confettiTimer = useRef<number | null>(null)
   const lastMurmur = useRef('')
@@ -602,14 +615,23 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, p
           >
             {!ready && !failed && <div className="raise-loading">正在召唤 Miku…</div>}
             {failed && <div className="raise-loading">Live2D 加载失败,养成数值仍然有效</div>}
-            <MikuStage
-              ref={stageApiRef}
-              variant="page"
-              width={size.w}
-              height={size.h}
-              onReady={() => setReady(true)}
-              onFailed={() => setFailed(true)}
-            />
+            {/* 离开本页即卸载:同页并存两只 Live2D 模型会毒害先创建那只的形变管线
+                (WASM 层,详见 MikuStage.onModelDead 注释),只保留最新创建的一只;
+                重进本页重载模型约 1-2 秒,期间显示召唤提示 */}
+            {visible && (
+              <MikuStage
+                key={stageEpoch}
+                ref={stageApiRef}
+                variant="page"
+                width={size.w}
+                height={size.h}
+                onReady={() => setReady(true)}
+                onFailed={() => setFailed(true)}
+                qqOn={mikuQQ}
+                onQQChange={onQQChange}
+                onModelDead={() => setStageEpoch((x) => x + 1)}
+              />
+            )}
           </div>
           {foods.map((f) => (
             <span
