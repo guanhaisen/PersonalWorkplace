@@ -1394,9 +1394,15 @@ textarea::placeholder {
   font-weight: 600;
 }
 
+/* 添加表单上移到列表上方:添加是本页最高频动作,原先 margin-top:auto 钉在卡片
+   底部,列表短时隔着整屏空白。面板 flex column,移动端用 order 把表单压回列表
+   后的拇指区(见底部 media query) */
+.panel-todo {
+  position: relative; /* 撤销条锚点 */
+}
+
 .todo-add {
-  margin-top: auto;
-  padding-top: 12px;
+  margin: 12px 0 2px;
 }
 
 .add-row2 {
@@ -1409,10 +1415,222 @@ textarea::placeholder {
   flex: 1;
 }
 
+/* 「今天/明天」快捷日期 chip:录任务最高频的两个截止日,一键设置/再点取消 */
+.add-chip {
+  height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--card);
+  color: var(--muted);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.add-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.add-chip.on {
+  border-color: transparent;
+  background: var(--accent-tint);
+  color: var(--accent-deep);
+  font-weight: 600;
+}
+
 .date-field {
   color: var(--muted);
   font-family: var(--mono);
   font-size: 12px;
+}
+
+/* 行内编辑:标题 + 截止日期(原先改日期只能删除重加) */
+.task-editing {
+  width: 100%;
+}
+
+.edit-row2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.edit-row2 .spacer {
+  flex: 1;
+}
+
+/* tabs 行右侧工具:排序开关与清空已完成 */
+.tabs-tail {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tab-sort {
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 5px;
+  transition: color 0.15s ease;
+}
+
+.tab-sort:hover {
+  color: var(--accent);
+}
+
+.tab-sort.on {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* 今日进度细条:分母 = 今天已完成 + 今天到期/过期未完成 */
+.today-bar {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--line-soft);
+  margin: 8px 0 0;
+  overflow: hidden;
+}
+
+.today-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.35s ease;
+}
+
+/* 今天到期/已过期未完成:左缘警示条,手动顺序里一眼可辨(不做自动重排,
+   保住拖拽语义;要按日期看可用「按截止日」排序开关) */
+.task.urgent {
+  box-shadow: inset 2.5px 0 0 var(--red);
+  background: color-mix(in srgb, var(--red) 4%, transparent);
+}
+
+/* 按截止日排序时拖拽禁用,光标不再暗示可拖 */
+.task-list.sorted .task {
+  cursor: default;
+}
+
+/* 已完成分组头(今天/更早) */
+.task-group-head {
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--text-3);
+  padding: 14px 6px 4px;
+}
+
+.task-group:first-child .task-group-head {
+  padding-top: 8px;
+}
+
+/* 总览窄卡:tabs 行放不下「按截止日/清空已完成」工具,收起只留 4 个 tab
+   (完整待办视图里仍可见),避免逐字竖排换行 */
+.board.v-overview .cell-todo .tabs-tail {
+  display: none;
+}
+
+/* 撤销条:删除/勾选/清空后的软着陆,5s 自动消失 */.todo-undo {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(92%, 420px);
+  background: var(--ink);
+  color: var(--card);
+  border-radius: 9px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  box-shadow: 0 10px 28px rgba(16, 24, 40, 0.22);
+  animation: ai-pop-in 0.18s ease;
+  white-space: nowrap;
+}
+
+.todo-undo-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.todo-undo button {
+  border: none;
+  background: transparent;
+  color: var(--accent-tint);
+  font-size: 12.5px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 5px;
+}
+
+.todo-undo button:hover {
+  color: #fff;
+}
+
+/* 空状态:陪伴式文案,进行中空列表按时段问候 */
+.todo-empty {
+  padding: 40px 8px 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.todo-empty-art {
+  font-size: 26px;
+  color: var(--accent);
+  opacity: 0.55;
+  margin-bottom: 6px;
+}
+
+.todo-empty-main {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.todo-empty-sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+/* 触屏没有 hover:行操作常显(桌面维持 hover 浮现的降噪) */
+@media (hover: none) {
+  .task .item-actions {
+    display: inline-flex;
+  }
+}
+
+/* 移动端整页滚动:列表自然高度,添加表单用 order 压回列表之后(拇指区);
+   tabs 行放不下排序/清空工具,一并收起 */
+@media (max-width: 640px) {
+  .panel-todo .task-list {
+    order: 1;
+  }
+
+  .panel-todo .todo-add {
+    order: 2;
+    margin-top: 12px;
+  }
+
+  .tabs-tail {
+    display: none;
+  }
 }
 
 /* ---------- 课表 ---------- */
