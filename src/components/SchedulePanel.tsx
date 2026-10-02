@@ -67,6 +67,11 @@ const BLOCKS = [
 export default function SchedulePanel({ courses, update }: Props) {
   const [draft, setDraft] = useState<Draft | null>(null)
   const [error, setError] = useState('')
+  // 删除课程二次确认:第一击变红「确认删除?」,再击才真删(与待办/习惯页同款)
+  const [delArm, setDelArm] = useState(false)
+  // 撤销:删除课程/批量导入前的整包快照,5s 内可一键还原(单槽,新操作顶掉旧的)
+  const [undo, setUndo] = useState<{ id: number; label: string; snapshot: Course[] } | null>(null)
+  const undoTimer = useRef<number | null>(null)
   // 文本导入弹层
   const [importOpen, setImportOpen] = useState(false)
   const [importText, setImportText] = useState('')
@@ -90,6 +95,28 @@ export default function SchedulePanel({ courses, update }: Props) {
     const t = setInterval(() => setNow(new Date()), 30_000)
     return () => clearInterval(t)
   }, [])
+
+  useEffect(
+    () => () => {
+      if (undoTimer.current !== null) window.clearTimeout(undoTimer.current)
+    },
+    [],
+  )
+
+  // 操作前整包快照当前课程表,浮出撤销条(5s 自动失效;连续操作以最后一次为准)
+  const pushUndo = (label: string) => {
+    if (undoTimer.current !== null) window.clearTimeout(undoTimer.current)
+    setUndo({ id: Date.now(), label, snapshot: courses })
+    undoTimer.current = window.setTimeout(() => setUndo(null), 5000)
+  }
+
+  const applyUndo = () => {
+    const u = undo
+    if (!u) return
+    if (undoTimer.current !== null) window.clearTimeout(undoTimer.current)
+    setUndo(null)
+    update('courses', () => u.snapshot)
+  }
 
   const todayIdx = (now.getDay() + 6) % 7 // 0 = 周一
 
@@ -166,6 +193,31 @@ export default function SchedulePanel({ courses, update }: Props) {
     return { map, others }
   }, [weekCourses])
 
+  // ---------- 当下意识:仅查看本周时,今天的课才有「进行中/下一节」概念 ----------
+  const nowMin = now.getHours() * 60 + now.getMinutes()
+  const isThisWeek = week === currentWeek
+  const todayCourses = useMemo(
+    () => weekCourses.filter((c) => c.weekday === todayIdx + 1),
+    [weekCourses, todayIdx],
+  )
+  const ongoingCourse = isThisWeek
+    ? todayCourses.find((c) => toMin(c.start) <= nowMin && nowMin < toMin(c.end))
+    : undefined
+  const nextCourse = isThisWeek
+    ? todayCourses
+        .filter((c) => toMin(c.start) > nowMin)
+        .sort((a, b) => toMin(a.start) - toMin(b.start))[0]
+    : undefined
+  // header 动态文案:看历史/未来周时保持节数;本周按当下推进(无课/进行中/下一节/全结束)
+  const todayMeta = (() => {
+    if (!isThisWeek) return `今日 ${todayCourses.length} 节`
+    if (todayCourses.length === 0) return '今日无课'
+    const remaining = todayCourses.filter((c) => toMin(c.end) > nowMin).length
+    if (ongoingCourse) return `正在上「${ongoingCourse.name}」 · 今日还剩 ${remaining} 节`
+    if (nextCourse) return `下一节 ${nextCourse.start} ${nextCourse.name} · 今日还剩 ${remaining} 节`
+    return '今日课已结束'
+  })()
+
   // 课程覆盖的小节范围,如「06~08小节」
   const periodsOf = (c: Course) => {
     const s = toMin(c.start)
@@ -186,7 +238,7 @@ export default function SchedulePanel({ courses, update }: Props) {
     return `第${range}周${p}`
   }
 
-  const todayCount = weekCourses.filter((c) => c.weekday === todayIdx + 1).length
+  // 说明:header 的动态文案见上方 todayMeta(本周按当下推进,非本周显示节数)
 
   // 全局快捷键/命令面板:新建课程(延迟一拍,等视图切换渲染完成)
   useEffect(() => {
@@ -211,6 +263,7 @@ export default function SchedulePanel({ courses, update }: Props) {
   const openNew = (weekday?: number, start?: number, end?: number) => {
     const s = start ?? DEFAULT_START
     setError('')
+    setDelArm(false)
     setDraft({
       id: null,
       name: '',
@@ -228,6 +281,7 @@ export default function SchedulePanel({ courses, update }: Props) {
 
   const openEdit = (c: Course) => {
     setError('')
+    setDelArm(false)
     setDraft({
       id: c.id,
       name: c.name,
@@ -285,6 +339,7 @@ export default function SchedulePanel({ courses, update }: Props) {
 
   const remove = () => {
     if (!draft?.id) return
+    pushUndo(`已删除「${draft.name}」`)
     update('courses', (items) => items.filter((c) => c.id !== draft.id))
     setDraft(null)
   }
@@ -331,6 +386,8 @@ export default function SchedulePanel({ courses, update }: Props) {
 
   const doImport = () => {
     if (preview.list.length === 0) return
+    // 含「清空现有课程后导入」误勾的后悔药:整包快照 5s 内可还原
+    pushUndo(importReplace ? `已清空并导入 ${preview.list.length} 门课` : `已导入 ${preview.list.length} 门课`)
     update('courses', (items) => {
       const base = importReplace ? [] : items
       const courses: Course[] = preview.list.map((c, i) => ({
@@ -366,24 +423,29 @@ export default function SchedulePanel({ courses, update }: Props) {
     openNew(weekday, block.startMin, block.endMin)
   }
 
-  const renderCard = (c: Course) => (
-    <button
-      key={c.id}
-      className={`crs c${((c.color % COLOR_COUNT) + COLOR_COUNT) % COLOR_COUNT}`}
-      title={`${c.name}${c.teacher ? `\n教师:${c.teacher}` : ''}${c.location ? `\n上课地点:${c.location}` : ''}\n${periodsOf(c)} ${c.start}-${c.end}${weeksOf(c) ? ` · ${weeksOf(c)}` : ''}\n点击编辑`}
-      onClick={(ev) => {
-        ev.stopPropagation()
-        openEdit(c)
-      }}
-    >
-      <span className="crs-name">{c.name}</span>
-      {c.teacher && <span className="crs-meta">教师:{c.teacher}</span>}
-      <span className="crs-meta">
-        {periodsOf(c)} {weeksOf(c) || `${c.start}-${c.end}`}
-      </span>
-      {c.location && <span className="crs-meta">上课地点:{c.location}</span>}
-    </button>
-  )
+  const renderCard = (c: Course) => {
+    const isOngoing = ongoingCourse?.id === c.id
+    const isNext = !isOngoing && nextCourse?.id === c.id
+    return (
+      <button
+        key={c.id}
+        className={`crs c${((c.color % COLOR_COUNT) + COLOR_COUNT) % COLOR_COUNT}${
+          isOngoing ? ' ongoing' : isNext ? ' up-next' : ''
+        }`}
+        title={`${c.name}${c.teacher ? `\n教师:${c.teacher}` : ''}${c.location ? `\n上课地点:${c.location}` : ''}\n${periodsOf(c)} ${c.start}-${c.end}${weeksOf(c) ? ` · ${weeksOf(c)}` : ''}\n点击编辑`}
+        onClick={(ev) => {
+          ev.stopPropagation()
+          openEdit(c)
+        }}
+      >
+        {(isOngoing || isNext) && <i className="crs-badge">{isOngoing ? '进行中' : '下一节'}</i>}
+        <span className="crs-name">{c.name}</span>
+        {/* 卡面只留「去哪上课」:地点。教师/周次/起止时间在悬停提示与编辑弹窗里,
+            原先 4-5 行全被截断,关键信息反而看不全 */}
+        {c.location && <span className="crs-meta">@{c.location}</span>}
+      </button>
+    )
+  }
 
   return (
     <div className="panel panel-schedule">
@@ -393,8 +455,8 @@ export default function SchedulePanel({ courses, update }: Props) {
           <i>/</i>课表
         </h2>
         <div className="sch-head-right">
-          <span className="p-meta">
-            共 {courses.length} 门 · 今日 {todayCount} 节
+          <span className="p-meta" title={isThisWeek ? '按当前时间实时计算' : undefined}>
+            共 {courses.length} 门 · {todayMeta}
           </span>
           <button className="btn ghost sch-add" onClick={openImport} title="粘贴文本批量导入课程">
             导入
@@ -406,6 +468,24 @@ export default function SchedulePanel({ courses, update }: Props) {
       </header>
 
       <div className="sch-toolbar">
+        <span className="sch-week-nav">
+          <button
+            type="button"
+            onClick={() => setWeek((w) => Math.max(1, w - 1))}
+            disabled={week <= 1}
+            title="上一周"
+          >
+            ‹
+          </button>
+          <button
+            type="button"
+            onClick={() => setWeek((w) => Math.min(MAX_WEEK, w + 1))}
+            disabled={week >= MAX_WEEK}
+            title="下一周"
+          >
+            ›
+          </button>
+        </span>
         <label className="sch-week-pick">
           第
           <select value={week} onChange={(e) => setWeek(Number(e.target.value))}>
@@ -416,6 +496,11 @@ export default function SchedulePanel({ courses, update }: Props) {
             ))}
           </select>
         </label>
+        {week !== currentWeek && (
+          <button type="button" className="sch-gohome" onClick={() => setWeek(currentWeek)} title="跳回当前周(不改学期锚点)">
+            回到本周
+          </button>
+        )}
         <button
           type="button"
           className="sch-pin-week"
@@ -453,12 +538,18 @@ export default function SchedulePanel({ courses, update }: Props) {
               </div>
               {WEEKDAYS.map((w, i) => {
                 const list = cellMap.map.get(`${b.label}|${i + 1}`) ?? []
+                // 当前时间指示线:仅本周的今天列、且当下落在这个大节区间内时,
+                // 按区间内的时间比例画红线(格子按卡片流布局,位置是近似值)
+                const showNow =
+                  isThisWeek && i === todayIdx && nowMin >= b.startMin && nowMin < b.endMin
+                const nowPct = ((nowMin - b.startMin) / (b.endMin - b.startMin)) * 100
                 return (
                   <div
                     key={`${b.label}|${w}`}
                     className={`sch-td ${i === todayIdx ? 'today' : ''}`}
                     onClick={(e) => onCellClick(i + 1, b, e)}
                   >
+                    {showNow && <i className="sch-now" style={{ top: `${nowPct}%` }} aria-hidden="true" />}
                     {list.map(renderCard)}
                   </div>
                 )
@@ -517,6 +608,13 @@ export default function SchedulePanel({ courses, update }: Props) {
           </div>
         </div>
       </div>
+
+      {undo && (
+        <div key={undo.id} className="todo-undo" role="status">
+          <span className="todo-undo-text">{undo.label}</span>
+          <button onClick={applyUndo}>撤销</button>
+        </div>
+      )}
 
       {draft && (
         <div className="cmd-overlay" onMouseDown={() => setDraft(null)}>
@@ -625,8 +723,12 @@ export default function SchedulePanel({ courses, update }: Props) {
 
             <footer className="hb-foot">
               {draft.id && (
-                <button className="btn ghost danger" onClick={remove}>
-                  删除课程
+                <button
+                  className={`btn ghost danger${delArm ? ' arm' : ''}`}
+                  onClick={() => (delArm ? remove() : setDelArm(true))}
+                  title={delArm ? '再点一次确认删除' : '删除这门课(可撤销)'}
+                >
+                  {delArm ? '确认删除?' : '删除课程'}
                 </button>
               )}
               <button className="btn solid" onClick={save}>

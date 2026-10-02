@@ -1647,6 +1647,136 @@ textarea::placeholder {
   font-size: 12px;
 }
 
+/* 撤销条锚点(删除课程/批量导入后 5s 可还原,复用 todo-undo) */
+.panel-schedule {
+  position: relative;
+}
+
+/* 周切换箭头:相邻周是高频操作,不必开 30 项的下拉 */
+.sch-week-nav {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.sch-week-nav button {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.sch-week-nav button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.sch-week-nav button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* 回到本周:仅在看历史/未来周时出现,不改学期锚点(区别于「设为本周」) */
+.sch-gohome {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent-tint);
+  color: var(--accent-deep);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.sch-gohome:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* 当前时间指示线:本周今天列、当下所在的大节区间内,按时间比例画红线 */
+.sch-td {
+  position: relative;
+}
+
+.sch-now {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  height: 2px;
+  z-index: 3;
+  background: var(--red);
+  border-radius: 2px;
+  pointer-events: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--red) 16%, transparent);
+}
+
+.sch-now::before {
+  content: '';
+  position: absolute;
+  left: -2px;
+  top: -2.5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--red);
+}
+
+/* 进行中/下一节:课程卡描边 + 角标(仅本周今天列) */
+.crs {
+  position: relative;
+}
+
+.crs-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 2;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+  line-height: 1;
+  padding: 2.5px 5px;
+  border-radius: 4px;
+  background: var(--red);
+  color: #fff;
+}
+
+.crs.ongoing {
+  box-shadow: 0 0 0 2px var(--red);
+}
+
+.crs.up-next .crs-badge {
+  background: var(--accent);
+}
+
+.crs.up-next {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+/* 危险按钮与武装确认态(编辑弹窗「删除课程」) */
+.btn.ghost.danger {
+  color: var(--red);
+}
+
+.btn.ghost.danger:hover {
+  border-color: var(--red);
+  background: var(--red-tint);
+  color: var(--red);
+}
+
+.btn.ghost.danger.arm {
+  background: var(--red);
+  border-color: var(--red);
+  color: #fff;
+}
+
 .sch-toolbar {
   display: flex;
   align-items: center;
