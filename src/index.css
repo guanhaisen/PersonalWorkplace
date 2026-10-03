@@ -1971,10 +1971,11 @@ textarea::placeholder {
 .sch-td {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
   min-height: 88px;
-  padding: 6px;
+  /* 内边距归零:课程卡铺满整格,靠表格的 1px 缝隙构成网格线 */
+  padding: 0;
   background: var(--card);
   cursor: pointer;
 }
@@ -1986,14 +1987,18 @@ textarea::placeholder {
 .crs {
   display: flex;
   flex-direction: column;
+  justify-content: center;
   gap: 2px;
-  padding: 6px 8px;
+  padding: 7px 9px;
   border-radius: 6px;
   border-left: 3px solid var(--c);
   background: var(--c-tint);
   color: var(--c-deep);
   text-align: left;
   min-width: 0;
+  /* 铺满所在格子:宽度吃满、多卡时按比例分摊行高,构成实心课表格 */
+  width: 100%;
+  flex: 1 1 auto;
   transition: filter 0.15s ease;
 }
 
