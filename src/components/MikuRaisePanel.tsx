@@ -37,6 +37,7 @@ import MikuStage, {
   MIKU_NOD_EVENT,
   MIKU_PLAY_EVENT,
   MIKU_QQ_EVENT,
+  MIKU_SLIDE_EVENT,
   MIKU_SQUINT_EVENT,
   MIKU_SPEAK_EVENT,
   MIKU_TAP_EVENT,
@@ -176,7 +177,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
   const cdRef = useRef<Record<string, number>>({})
   const holdTimerRef = useRef<number | null>(null)
   const holdFiredRef = useRef(false)
-  const stageDragRef = useRef<{ x0: number; y0: number; dragging: boolean } | null>(null)
+  const stageDragRef = useRef<{ x0: number; y0: number; lastX: number; dragging: boolean } | null>(null)
   const suppressClickRef = useRef(false)
   // 小游戏冷却(会话内 3 分钟)
   const gameCdRef = useRef(0)
@@ -444,7 +445,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
 
   const onStagePointerDown = (e: React.PointerEvent) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return
-    stageDragRef.current = { x0: e.clientX, y0: e.clientY, dragging: false }
+    stageDragRef.current = { x0: e.clientX, y0: e.clientY, lastX: e.clientX, dragging: false }
     holdFiredRef.current = false
     if (holdTimerRef.current !== null) window.clearTimeout(holdTimerRef.current)
     holdTimerRef.current = window.setTimeout(() => {
@@ -461,15 +462,23 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
 
   const onStagePointerMove = (e: React.PointerEvent) => {
     const d = stageDragRef.current
-    if (!d || d.dragging) return
-    if (Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < 8) return
-    d.dragging = true
-    // 拖拽激活:作废未触发的长按;身体摇摆由 MikuStage 的 DRAG_START 处理
-    if (holdTimerRef.current !== null) {
-      window.clearTimeout(holdTimerRef.current)
-      holdTimerRef.current = null
+    if (!d) return
+    if (!d.dragging) {
+      if (Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < 8) return
+      d.dragging = true
+      d.lastX = e.clientX
+      // 拖拽激活:作废未触发的长按;摆动由 MikuStage 的 DRAG_START 处理
+      if (holdTimerRef.current !== null) {
+        window.clearTimeout(holdTimerRef.current)
+        holdTimerRef.current = null
+      }
+      window.dispatchEvent(new CustomEvent(MIKU_DRAG_START_EVENT))
+      return
     }
-    window.dispatchEvent(new CustomEvent(MIKU_DRAG_START_EVENT))
+    // 拖动中:水平增量派发给 MikuStage 平移支点(左右拖动她换个位置站)
+    const dx = e.clientX - d.lastX
+    d.lastX = e.clientX
+    if (dx !== 0) window.dispatchEvent(new CustomEvent(MIKU_SLIDE_EVENT, { detail: { dx } }))
   }
 
   const onStagePointerEnd = () => {
@@ -807,7 +816,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
             onPointerLeave={onStagePointerEnd}
             onClick={onStageTap}
             onDoubleClick={() => window.dispatchEvent(new CustomEvent(MIKU_QQ_EVENT))}
-            title="摸摸她 · 长按摸头 · 拖一拖 · 双击变 QQ 形态"
+            title="摸摸她 · 长按摸头 · 拖动她换位置 · 双击变 QQ 形态"
           >
             {/* 影子在舞台盒内:与 Miku 脚底精确对齐(天色/地台在外层场景层) */}
             <div className="stage-shadow" aria-hidden="true" />
@@ -877,7 +886,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
                   <b>长按</b>害羞地摸摸头
                 </li>
                 <li>
-                  <b>拖一拖</b>身体轻轻摇摆
+                  <b>拖一拖</b>带她换个位置站
                 </li>
                 <li>
                   <b>双击</b>变身 QQ 形态

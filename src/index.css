@@ -5301,10 +5301,11 @@ kbd {
   background: radial-gradient(ellipse at 50% 100%, #2a3a5c 0%, #232f4e 70%);
 }
 
-/* 影子:脚下椭圆;QQ 形态变小(她缩到约 37% 高) */
+/* 影子:脚下椭圆,跟随用户的左右拖动(MikuStage 写 --miku-slide-x);
+   QQ 形态变小(她缩到约 37% 高) */
 .stage-shadow {
   position: absolute;
-  left: 50%;
+  left: calc(50% + var(--miku-slide-x, 0px));
   bottom: 3px;
   width: 40%;
   height: 14px;

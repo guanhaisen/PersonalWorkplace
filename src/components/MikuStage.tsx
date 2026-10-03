@@ -63,6 +63,8 @@ export const MIKU_EXPRESS_EVENT = 'miku:express'
 export const MIKU_TAP_EVENT = 'miku:tap'
 export const MIKU_DRAG_START_EVENT = 'miku:dragstart'
 export const MIKU_DRAG_END_EVENT = 'miku:dragend'
+/** 舞台内左右拖动(detail {dx} 增量,养成页):平移支点目标,钳制在画布两侧留边内 */
+export const MIKU_SLIDE_EVENT = 'miku:slide'
 export const MIKU_QQ_EVENT = 'miku:qq'
 /** 指定表演:detail 为 { expression?: 名称, talkMs?: 口型时长 ms } 或 { dance?: true }(右键菜单「动作」用) */
 export const MIKU_PLAY_EVENT = 'miku:play'
@@ -306,6 +308,9 @@ function MikuStageInner(
   // 舞台是否可见:挂在 display:none 子树(如切走后的养成页/隐藏的悬浮球)里时应
   // 完全静默——不响应 window 互动事件、不做闲置彩蛋,否则看不见的她会在背后偷偷演
   const stageVisible = () => !!hostRef.current && hostRef.current.getClientRects().length > 0
+  // 用户在舞台内左右拖动累计的水平位移(px):居中自检与 QQ 形态切换都要以此为基准,
+  // 否则会把她「修正」回画布中线,撤销用户的摆放
+  const slideXRef = useRef(0)
 
   // 回读当前画布帧,统计「不透明像素」的包围盒(设备像素,GL 坐标系 y 向上)。
   // Live2D 的 anchor 居中按全部网格取中,已关闭的水印、未启用的 QQ 形态部件等
@@ -401,8 +406,13 @@ function MikuStageInner(
     qqTargetRef.current = entering ? 1 : 0
     const base = entering ? basePosQQ : basePosNormal
     const off = entering ? qqOffsetRef.current ?? 0 : normalOffsetRef.current
+    // 用户拖动的水平位移跟随形态:换形态后她站的地方不变(重新钳制在留边内)
+    const slideX = Math.min(
+      Math.max(slideXRef.current, width * 0.16 - (base.x + off)),
+      width * 0.84 - (base.x + off),
+    )
     basePosTargetRef.current = {
-      x: base.x + off,
+      x: base.x + off + slideX,
       y: base.y + (entering ? qqOffsetYRef.current : 0),
     }
     bounceAtRef.current = performance.now()
@@ -459,7 +469,9 @@ function MikuStageInner(
         return
       }
       const dx = measureCenterDx()
-      if (dx && Math.abs(dx) <= width * 0.2) {
+      // 用户拖动过(slideX ≠ 0)时,轮廓中心的水平偏差包含用户位移,不再叠加进
+      // 形态偏移缓存(否则拖动位移会被当成标定误差双倍写回);纵向与拖动无关照常
+      if (slideXRef.current === 0 && dx && Math.abs(dx) <= width * 0.2) {
         qqOffsetRef.current = (qqOffsetRef.current ?? 0) + dx
         basePosTargetRef.current.x += dx
       }
@@ -749,13 +761,15 @@ function MikuStageInner(
               verifying = false
               const sorted = [...samples].sort((a, b) => a - b)
               if (sorted[2] - sorted[0] > 8) return
-              const fix = sorted[1]
+              // 用户拖动过时,轮廓中心相对画布中线的偏差包含用户位移本身,
+              // 只把「预期位置(中线 + 用户位移)」的残差当作漂移修正
+              const fix = sorted[1] + slideXRef.current
               if (Math.abs(fix) < 16) return
               // 自检的 fix 是「往回纠」,量级交给结果约束:修正后的目标不允许偏离
-              // 画布中线超过 35%(真实居中修正约 14%);沿用首次的 20% fix 钳制会
+              // 预期位置超过 35%(真实居中修正约 14%);沿用首次的 20% fix 钳制会
               // 拒收大残差(实测污染态残差 94px ≈ 25.5%),自检反而救不回来
               const targetX = basePosTargetRef.current.x + fix
-              if (Math.abs(targetX - width / 2) > width * 0.35) return
+              if (Math.abs(targetX - (width / 2 + slideXRef.current)) > width * 0.35) return
               if (qqTargetRef.current === 1) qqOffsetRef.current = (qqOffsetRef.current ?? 0) + fix
               else normalOffsetRef.current += fix
               basePosTargetRef.current = { ...basePosTargetRef.current, x: targetX }
@@ -1078,6 +1092,29 @@ function MikuStageInner(
       // 落地小弹跳
       if (readyRef.current) bounceAtRef.current = performance.now()
     }
+    // 舞台内左右拖动(养成页):dx 增量平移支点目标,钳制在画布两侧留边内;
+    // 累计位移记入 slideXRef(居中自检/QQ 切换以此为基准),并同步 CSS 变量
+    // 让面板的脚下影子跟随
+    const onSlide = (e: Event) => {
+      if (!stageVisible() || !readyRef.current) return
+      const dx = (e as CustomEvent).detail?.dx as number | undefined
+      if (typeof dx !== 'number' || dx === 0) return
+      const app = appRef.current
+      if (app && !app.ticker.started) app.ticker.start() // 兜底拉起渲染循环(幂等)
+      const next = Math.min(
+        Math.max(basePosTargetRef.current.x + dx, width * 0.16),
+        width * 0.84,
+      )
+      slideXRef.current = Math.min(
+        Math.max(slideXRef.current + (next - basePosTargetRef.current.x), -width * 0.7),
+        width * 0.7,
+      )
+      basePosTargetRef.current = { ...basePosTargetRef.current, x: next }
+      hostRef.current?.parentElement?.style.setProperty(
+        '--miku-slide-x',
+        `${Math.round(slideXRef.current)}px`,
+      )
+    }
     const onExpress = () => {
       if (!stageVisible()) return
       showExpression(LIGHT_EXPRESSIONS[Math.floor(Math.random() * LIGHT_EXPRESSIONS.length)])
@@ -1179,6 +1216,7 @@ function MikuStageInner(
     window.addEventListener(MIKU_TAP_EVENT, onTap)
     window.addEventListener(MIKU_DRAG_START_EVENT, onDragStart)
     window.addEventListener(MIKU_DRAG_END_EVENT, onDragEnd)
+    window.addEventListener(MIKU_SLIDE_EVENT, onSlide)
     window.addEventListener(MIKU_EXPRESS_EVENT, onExpress)
     window.addEventListener(MIKU_QQ_EVENT, onQQ)
     window.addEventListener(MIKU_PLAY_EVENT, onPlay)
@@ -1193,6 +1231,7 @@ function MikuStageInner(
       window.removeEventListener(MIKU_TAP_EVENT, onTap)
       window.removeEventListener(MIKU_DRAG_START_EVENT, onDragStart)
       window.removeEventListener(MIKU_DRAG_END_EVENT, onDragEnd)
+      window.removeEventListener(MIKU_SLIDE_EVENT, onSlide)
       window.removeEventListener(MIKU_EXPRESS_EVENT, onExpress)
       window.removeEventListener(MIKU_QQ_EVENT, onQQ)
       window.removeEventListener(MIKU_PLAY_EVENT, onPlay)
