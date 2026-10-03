@@ -6,7 +6,7 @@
 // 互动增强:投喂飞食动画+咀嚼口型、舞台拖拽摇摆、连击浮标、长按摸头(眯眼+点头)、
 // 时段×状态问候与主动撒娇、连续来访签到、升级撒花、等级解锁互动、成就任务券
 // (侧栏摘要+浮层,方向B定稿见 miku-badges/direction-approved.md)、接大葱小游戏。
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { AppData } from '../types'
 import { todayStr } from '../api'
 import {
@@ -116,8 +116,19 @@ interface FlyingFood {
 }
 
 export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, onQQChange, playMiku, emoteOn, toggleEmote, clearEmotes, visible = true }: Props) {
-  const [size, setSize] = useState(pickStageSize)
-  const stageSizeRef = useRef(size)
+  // 画布尺寸:高度按视口推算,宽度在挂载后量整个舞台容器(此前画布只有 ~462px
+  // 的盒子宽,和 Miku 展开的头发差不多宽,左右拖动几步就会被画布边缘腰斩)。
+  // 首帧先渲染召唤提示,量完宽再挂载舞台,不会出现「先按盒子宽建画布再重载」
+  const [size, setSize] = useState<{ w: number; h: number } | null>(null)
+  const stageSizeRef = useRef<{ w: number; h: number } | null>(null)
+  useLayoutEffect(() => {
+    const base = pickStageSize()
+    const wrapW = stageWrapRef.current?.clientWidth ?? base.w
+    const next = { w: Math.min(Math.max(wrapW, 320), 1200), h: base.h }
+    stageSizeRef.current = next
+    setSize(next)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const [ready, setReady] = useState(false)
   const [failed, setFailed] = useState(false)
   // 台词气泡条目:ach = 句首要带的成就章
@@ -424,8 +435,11 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
       timer = window.setTimeout(() => {
         timer = null
         if (!panelVisible()) return // 隐藏期间不折腾,回屏后的 resize 会补上
-        const next = pickStageSize()
+        const base = pickStageSize()
+        const wrapW = stageWrapRef.current?.clientWidth ?? base.w
+        const next = { w: Math.min(Math.max(wrapW, 320), 1200), h: base.h }
         const prev = stageSizeRef.current
+        if (!prev) return
         if (Math.abs(next.w - prev.w) <= 32 && Math.abs(next.h - prev.h) <= 32) return
         stageSizeRef.current = next
         setSize(next)
@@ -806,7 +820,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
           <div
             className="raise-stage"
             ref={stageRef}
-            style={{ width: size.w, height: size.h }}
+            style={size ? { width: size.w, height: size.h } : undefined}
             role="button"
             aria-label="摸摸 Miku"
             onPointerDown={onStagePointerDown}
@@ -843,7 +857,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
             {/* 离开本页即卸载:同页并存两只 Live2D 模型会毒害先创建那只的形变管线
                 (WASM 层,详见 MikuStage.onModelDead 注释),只保留最新创建的一只;
                 重进本页重载模型约 1-2 秒,期间显示召唤提示 */}
-            {visible && (
+            {size && visible && (
               <MikuStage
                 key={stageEpoch}
                 ref={stageApiRef}

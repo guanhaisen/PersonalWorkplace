@@ -311,6 +311,29 @@ function MikuStageInner(
   // 用户在舞台内左右拖动累计的水平位移(px):居中自检与 QQ 形态切换都要以此为基准,
   // 否则会把她「修正」回画布中线,撤销用户的摆放
   const slideXRef = useRef(0)
+  // 拖动边界:按「可见剪影」半宽计算——网格 bound 比可见头发窄很多(头发动画
+  // 超出 bind-pose,实测 bound 151px vs 剪影 ~250px),按 bound 钳制她仍会被
+  // 画布边缘裁切;剪影宽度量一次按形态缓存,QQ 形态剪影约缩到四成
+  const silHalfRef = useRef<{ normal: number | null; qq: number | null }>({
+    normal: null,
+    qq: null,
+  })
+  const slideBounds = (allowScan: boolean) => {
+    const model = modelRef.current
+    let half = model ? model.width / 2 : width * 0.35
+    const key = qqTargetRef.current === 1 ? 'qq' : 'normal'
+    const cached = silHalfRef.current[key]
+    if (cached != null) {
+      half = cached
+    } else if (allowScan && readyRef.current && stageVisible()) {
+      const sil = scanSilhouette()
+      if (sil) {
+        half = (sil.maxX - sil.minX) / 2 / (appRef.current?.renderer.resolution || 1)
+        silHalfRef.current[key] = half
+      }
+    }
+    return { min: half + 4, max: width - half - 4 }
+  }
 
   // 回读当前画布帧,统计「不透明像素」的包围盒(设备像素,GL 坐标系 y 向上)。
   // Live2D 的 anchor 居中按全部网格取中,已关闭的水印、未启用的 QQ 形态部件等
@@ -406,10 +429,12 @@ function MikuStageInner(
     qqTargetRef.current = entering ? 1 : 0
     const base = entering ? basePosQQ : basePosNormal
     const off = entering ? qqOffsetRef.current ?? 0 : normalOffsetRef.current
-    // 用户拖动的水平位移跟随形态:换形态后她站的地方不变(重新钳制在留边内)
+    // 用户拖动的水平位移跟随形态:换形态后她站的地方不变(按剪影重新钳制;
+    // applyQQ 时刻的形态尚未变形,扫描留给 onSlide,这里用缓存或保守的 bound)
+    const b = slideBounds(false)
     const slideX = Math.min(
-      Math.max(slideXRef.current, width * 0.16 - (base.x + off)),
-      width * 0.84 - (base.x + off),
+      Math.max(slideXRef.current, b.min - (base.x + off)),
+      b.max - (base.x + off),
     )
     basePosTargetRef.current = {
       x: base.x + off + slideX,
@@ -691,6 +716,8 @@ function MikuStageInner(
           const applyCentering = (attempt: number) => {
             requestAnimationFrame(() => {
               if (disposed || !model) return
+              // 用户已拖动:位置由用户决定,首回合自动居中让位(同周期自检)
+              if (slideXRef.current !== 0) return
               const samples: number[] = []
               const next = () => {
                 requestAnimationFrame(() => {
@@ -701,13 +728,16 @@ function MikuStageInner(
                     window.setTimeout(next, 160)
                     return
                   }
-                  const sorted = [...samples].sort((a, b) => a - b)
-                  if (sorted[2] - sorted[0] > 8 && attempt < 2) {
-                    applyCentering(attempt + 1) // 三帧不一致:多半撞上动作/半帧,重测一轮
-                    return
-                  }
-                  const dx = sorted[1]
-                  if (Math.abs(dx) < 0.5 || Math.abs(dx) > width * 0.2) return
+              const sorted = [...samples].sort((a, b) => a - b)
+              if (sorted[2] - sorted[0] > 8 && attempt < 2) {
+                applyCentering(attempt + 1) // 三帧不一致:多半撞上动作/半帧,重测一轮
+                return
+              }
+              // 用户已拖动过(slideX ≠ 0)时,测得的偏差包含用户位移本身,只修
+              // 自然不对称——否则拖动位置会被当成偏移写进 normalOffset,整个人
+              // 被拉回画布中线(实测 slideX=163 时被锁入 -218 偏移)
+              const dx = sorted[1] + slideXRef.current
+              if (Math.abs(dx) < 0.5 || Math.abs(dx) > width * 0.2) return
                   if (normalOffsetRef.current !== 0) return // 后续轮次兜底,首轮成功即不再重复修正
                   normalOffsetRef.current = dx
                   model.position.x += dx
@@ -737,6 +767,9 @@ function MikuStageInner(
           centeringTimerRef.current = window.setInterval(() => {
             if (verifying || disposed || document.hidden || !stageVisible()) return
             if (!readyRef.current || draggingRef.current || pinnedRef.current === DANCE_PIN) return
+            // 用户拖动过:她站的位置由用户决定,自检的数学以「居中姿态」为前提,
+            // 不再介入(否则会以各种基准把她拉来推去)
+            if (slideXRef.current !== 0) return
             if (qqTargetRef.current === 1 && qqOffsetRef.current == null) return
             verifying = true
             const samples: number[] = []
@@ -761,15 +794,13 @@ function MikuStageInner(
               verifying = false
               const sorted = [...samples].sort((a, b) => a - b)
               if (sorted[2] - sorted[0] > 8) return
-              // 用户拖动过时,轮廓中心相对画布中线的偏差包含用户位移本身,
-              // 只把「预期位置(中线 + 用户位移)」的残差当作漂移修正
-              const fix = sorted[1] + slideXRef.current
+              const fix = sorted[1]
               if (Math.abs(fix) < 16) return
               // 自检的 fix 是「往回纠」,量级交给结果约束:修正后的目标不允许偏离
-              // 预期位置超过 35%(真实居中修正约 14%);沿用首次的 20% fix 钳制会
+              // 画布中线超过 35%(真实居中修正约 14%);沿用首次的 20% fix 钳制会
               // 拒收大残差(实测污染态残差 94px ≈ 25.5%),自检反而救不回来
               const targetX = basePosTargetRef.current.x + fix
-              if (Math.abs(targetX - (width / 2 + slideXRef.current)) > width * 0.35) return
+              if (Math.abs(targetX - width / 2) > width * 0.35) return
               if (qqTargetRef.current === 1) qqOffsetRef.current = (qqOffsetRef.current ?? 0) + fix
               else normalOffsetRef.current += fix
               basePosTargetRef.current = { ...basePosTargetRef.current, x: targetX }
@@ -1101,10 +1132,8 @@ function MikuStageInner(
       if (typeof dx !== 'number' || dx === 0) return
       const app = appRef.current
       if (app && !app.ticker.started) app.ticker.start() // 兜底拉起渲染循环(幂等)
-      const next = Math.min(
-        Math.max(basePosTargetRef.current.x + dx, width * 0.16),
-        width * 0.84,
-      )
+      const b = slideBounds(true)
+      const next = Math.min(Math.max(basePosTargetRef.current.x + dx, b.min), b.max)
       slideXRef.current = Math.min(
         Math.max(slideXRef.current + (next - basePosTargetRef.current.x), -width * 0.7),
         width * 0.7,
