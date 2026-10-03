@@ -832,8 +832,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
             onDoubleClick={() => window.dispatchEvent(new CustomEvent(MIKU_QQ_EVENT))}
             title="摸摸她 · 长按摸头 · 拖动她换位置 · 双击变 QQ 形态"
           >
-            {/* 影子在舞台盒内:与 Miku 脚底精确对齐(天色/地台在外层场景层) */}
-            <div className="stage-shadow" aria-hidden="true" />
+            {/* 影子由 MikuStage 宿主自带(随模型重挂一起重置),此处不再放 */}
             {!ready && !failed && (
               <div className="raise-loading">
                 <span className="boot-spinner" aria-hidden="true" />

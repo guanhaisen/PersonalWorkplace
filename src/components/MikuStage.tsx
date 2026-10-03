@@ -430,16 +430,19 @@ function MikuStageInner(
     const base = entering ? basePosQQ : basePosNormal
     const off = entering ? qqOffsetRef.current ?? 0 : normalOffsetRef.current
     // 用户拖动的水平位移跟随形态:换形态后她站的地方不变(按剪影重新钳制;
-    // applyQQ 时刻的形态尚未变形,扫描留给 onSlide,这里用缓存或保守的 bound)
+    // applyQQ 时刻的形态尚未变形,扫描留给 onSlide,这里用缓存或保守的 bound)。
+    // 钳制后的实际位移回写 slideXRef 与 CSS 变量,影子(住在本组件宿主里)同步
     const b = slideBounds(false)
     const slideX = Math.min(
       Math.max(slideXRef.current, b.min - (base.x + off)),
       b.max - (base.x + off),
     )
+    slideXRef.current = slideX
     basePosTargetRef.current = {
       x: base.x + off + slideX,
       y: base.y + (entering ? qqOffsetYRef.current : 0),
     }
+    hostRef.current?.style.setProperty('--miku-slide-x', `${Math.round(slideX)}px`)
     bounceAtRef.current = performance.now()
     if (entering) {
       // 可见时才采得到:scanSilhouette 读的是已渲染像素,刚进 QQ 的支点平移
@@ -1139,7 +1142,8 @@ function MikuStageInner(
         width * 0.7,
       )
       basePosTargetRef.current = { ...basePosTargetRef.current, x: next }
-      hostRef.current?.parentElement?.style.setProperty(
+      // 影子跟随:影子住在本组件宿主内(随宿主重挂一起重置,不会与模型位置脱节)
+      hostRef.current?.style.setProperty(
         '--miku-slide-x',
         `${Math.round(slideXRef.current)}px`,
       )
@@ -1331,7 +1335,11 @@ function MikuStageInner(
       className={`miku-stage${variant === 'page' ? ' page' : ''}${ready ? ' ready' : ''}`}
       style={{ width, height }}
       aria-hidden="true"
-    />
+    >
+      {/* 脚下影子(page 变体):随 --miku-slide-x 平移。住在宿主内——宿主重挂
+          (网格自愈/HMR/切页)时影子与 slideXRef 一起重置,永不与模型位置脱节 */}
+      {variant === 'page' && <div className="stage-shadow" aria-hidden="true" />}
+    </div>
   )
 }
 
