@@ -743,7 +743,21 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
           </span>
         </header>
 
-        <div className="raise-stage-wrap" ref={stageWrapRef}>
+        <div className={`raise-stage-wrap band-${timeBand}${mikuQQ ? ' is-qq' : ''}`} ref={stageWrapRef}>
+          {/* 场景装饰层铺满整个舞台容器(而非仅中间的舞台盒):天色/月亮星星云/地台,
+              纯 CSS 不碰 Live2D 画布;影子留在舞台盒内与 Miku 脚底对齐 */}
+          <div className={`stage-scene scene-${timeBand}`} aria-hidden="true">
+            <i className="scene-moon" />
+            <i className="scene-star s1" />
+            <i className="scene-star s2" />
+            <i className="scene-star s3" />
+            <i className="scene-star s4" />
+            <i className="scene-star s5" />
+            <i className="scene-star s6" />
+            <i className="scene-cloud c1" />
+            <i className="scene-cloud c2" />
+            <div className="stage-ground" />
+          </div>
           {bubble && (
             <div key={bubble.id} className="raise-bubble" role="status">
               {bubble.ach && <AchChip k={bubble.ach.key} tier={bubble.ach.tier} />}
@@ -781,7 +795,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
             </div>
           )}
           <div
-            className={`raise-stage band-${timeBand}${mikuQQ ? ' is-qq' : ''}`}
+            className="raise-stage"
             ref={stageRef}
             style={{ width: size.w, height: size.h }}
             role="button"
@@ -795,20 +809,8 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
             onDoubleClick={() => window.dispatchEvent(new CustomEvent(MIKU_QQ_EVENT))}
             title="摸摸她 · 长按摸头 · 拖一拖 · 双击变 QQ 形态"
           >
-            {/* 场景装饰层:天色/月亮星星云/地台/影子,纯 CSS 不碰 Live2D 画布 */}
-            <div className={`stage-scene scene-${timeBand}`} aria-hidden="true">
-              <i className="scene-moon" />
-              <i className="scene-star s1" />
-              <i className="scene-star s2" />
-              <i className="scene-star s3" />
-              <i className="scene-star s4" />
-              <i className="scene-star s5" />
-              <i className="scene-star s6" />
-              <i className="scene-cloud c1" />
-              <i className="scene-cloud c2" />
-              <div className="stage-ground" />
-              <div className="stage-shadow" />
-            </div>
+            {/* 影子在舞台盒内:与 Miku 脚底精确对齐(天色/地台在外层场景层) */}
+            <div className="stage-shadow" aria-hidden="true" />
             {!ready && !failed && (
               <div className="raise-loading">
                 <span className="boot-spinner" aria-hidden="true" />

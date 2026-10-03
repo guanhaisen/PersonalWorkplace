@@ -5145,12 +5145,13 @@ kbd {
   inset: 0;
   z-index: 0;
   overflow: hidden;
-  border-radius: 8px;
+  border-radius: 10px;
   pointer-events: none;
   transition: background 1.2s ease;
 }
 
-.raise-stage .miku-stage {
+/* 舞台盒(含画布)整体抬到场景层之上 */
+.raise-stage {
   z-index: 1;
 }
 
@@ -5317,7 +5318,7 @@ kbd {
   background: radial-gradient(ellipse, rgba(0, 0, 0, 0.48) 0%, transparent 66%);
 }
 
-.raise-stage.is-qq .stage-shadow {
+.raise-stage-wrap.is-qq .stage-shadow {
   width: 60px;
   height: 8px;
 }
