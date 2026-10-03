@@ -64,8 +64,11 @@ export default function ReportPanel({ data }: { data: AppData }) {
   const [offset, setOffset] = useState(0)
   const week = useMemo(() => weekRange(offset), [offset])
   const stats = useMemo(() => buildStats(data, week), [data, week])
+  // 环比:上一周的同期统计(周报的核心问题「比起上周怎么样」)
+  const lastStats = useMemo(() => buildStats(data, weekRange(offset - 1)), [data, offset])
   const [cfg, setCfg] = useState<AiConfigInfo | null>(null)
   const [comment, setComment] = useState('')
+  const [copied, setCopied] = useState(false)
   const [aiBusy, setAiBusy] = useState(false)
   const [aiError, setAiError] = useState('')
 
@@ -82,6 +85,37 @@ export default function ReportPanel({ data }: { data: AppData }) {
   }, [offset])
 
   const configured = !!cfg && !!cfg.baseUrl && !!cfg.model && cfg.hasKey
+
+  // 环比标记:与上一周同期比;上周无记录时如实说明,持平灰、向好绿、变差红
+  // (逾期卡反转:减少是好事)。上周值可以从任何周看
+  const deltaChip = (cur: number, prev: number, invert = false) => {
+    if (prev === 0) return <i className="rdelta na">上周无记录</i>
+    const d = cur - prev
+    if (d === 0) return <i className="rdelta flat">较上周持平</i>
+    const good = invert ? d < 0 : d > 0
+    return (
+      <i className={`rdelta ${good ? 'good' : 'bad'}`}>
+        {d > 0 ? '↑' : '↓'} 较上周 {d > 0 ? `+${d}` : d}
+      </i>
+    )
+  }
+
+  // 空周语境:本周(且正在看本周)三样全零时给一句动态引导,周末顺手递上上周
+  const weekAllEmpty =
+    stats.doneWeek.length === 0 && stats.createdWeek.length === 0 && stats.habitDone === 0
+  const dow = new Date().getDay() // 0 = 周日
+  const lateWeek = dow === 0 || dow >= 4 // 周四五六十日算「后半程」
+  const lastWeekHasData = lastStats.doneWeek.length > 0 || lastStats.habitDone > 0
+
+  const copyComment = async () => {
+    try {
+      await navigator.clipboard.writeText(comment)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1500)
+    } catch {
+      // 剪贴板不可用(非安全上下文等):静默,按钮保持原样
+    }
+  }
 
   const genComment = async () => {
     setAiBusy(true)
@@ -131,6 +165,17 @@ export default function ReportPanel({ data }: { data: AppData }) {
         </div>
       </header>
 
+      {offset === 0 && weekAllEmpty && (
+        <div className="report-context">
+          <p>{lateWeek ? '这周快结束了,还没有留下记录' : '新的一周刚开始,完成第一件小事就会出现这里'}</p>
+          {lateWeek && lastWeekHasData && (
+            <button className="btn ghost report-context-btn" onClick={() => setOffset(-1)}>
+              看上周(完成 {lastStats.doneWeek.length} · 打卡 {lastStats.habitDone})
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="report-stats">
         <div className="rstat">
           <b>
@@ -138,6 +183,7 @@ export default function ReportPanel({ data }: { data: AppData }) {
             <em>/ {stats.createdWeek.length}</em>
           </b>
           <span>完成 / 新建待办</span>
+          {deltaChip(stats.doneWeek.length, lastStats.doneWeek.length)}
         </div>
         <div className="rstat">
           <b>
@@ -145,10 +191,12 @@ export default function ReportPanel({ data }: { data: AppData }) {
             <em>/ {stats.habitTotal}</em>
           </b>
           <span>习惯打卡</span>
+          {deltaChip(stats.habitDone, lastStats.habitDone)}
         </div>
         <div className={`rstat ${stats.overdue.length > 0 ? 'warn' : ''}`}>
           <b>{stats.overdue.length}</b>
           <span>逾期待办</span>
+          {deltaChip(stats.overdue.length, lastStats.overdue.length, true)}
         </div>
       </div>
 
@@ -156,22 +204,22 @@ export default function ReportPanel({ data }: { data: AppData }) {
         <h3 className="rsec-title">
           习惯打卡分布<span className="rsec-sub">次数 / 天 · {stats.habitDays} 天有记录</span>
         </h3>
-        {stats.habitDone > 0 ? (
-          <div className="report-chart">
-            {stats.habitPerDay.map((n, i) => (
-              <div key={i} className="rcol">
-                {n > 0 && <span className="rval">{n}</span>}
-                <div
-                  className={`rbar ${n === 0 ? 'zero' : ''} ${week.days[i] === stats.today ? 'today' : ''}`}
-                  style={{ height: `${Math.max(Math.round((n / maxCount) * 88), 3)}px` }}
-                  title={`${week.days[i]}(周${WEEK_LABELS[i]})打卡 ${n} 次`}
-                />
-                <span className="rlab">{WEEK_LABELS[i]}</span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="empty-hint">这一周没有打卡记录</div>
+        {/* 图表恒渲染:全零时就是 7 根 3px 灰柱,比「没有记录」一句话更有骨架感 */}
+        <div className="report-chart">
+          {stats.habitPerDay.map((n, i) => (
+            <div key={i} className="rcol">
+              {n > 0 && <span className="rval">{n}</span>}
+              <div
+                className={`rbar ${n === 0 ? 'zero' : ''} ${week.days[i] === stats.today ? 'today' : ''}`}
+                style={{ height: `${Math.max(Math.round((n / maxCount) * 88), 3)}px` }}
+                title={`${week.days[i]}(周${WEEK_LABELS[i]})打卡 ${n} 次`}
+              />
+              <span className="rlab">{WEEK_LABELS[i]}</span>
+            </div>
+          ))}
+        </div>
+        {stats.habitDone === 0 && (
+          <div className="empty-hint">这一周没有打卡记录,去「习惯」页打卡后,这里会出现周分布柱状图</div>
         )}
       </section>
 
@@ -180,6 +228,22 @@ export default function ReportPanel({ data }: { data: AppData }) {
           待办
           {stats.overdue.length > 0 && <span className="rsec-warn">{stats.overdue.length} 条逾期</span>}
         </h3>
+        {/* 逾期清单:卡上只有数字,逾期了什么要一眼可见(≤5 条,含截止日) */}
+        {stats.overdue.length > 0 && (
+          <div className="roverdue">
+            {stats.overdue.slice(0, 5).map((t) => (
+              <div key={t.id} className="roverdue-row">
+                <span className="roverdue-title" title={t.title}>
+                  {t.title}
+                </span>
+                <span className="roverdue-due">截止 {t.dueDate!.slice(5, 10).replace('-', '/')}</span>
+              </div>
+            ))}
+            {stats.overdue.length > 5 && (
+              <div className="rmore">…以及另外 {stats.overdue.length - 5} 条逾期</div>
+            )}
+          </div>
+        )}
         {doneShown.length > 0 ? (
           doneShown.map((t) => (
             <div key={t.id} className="rline">
@@ -199,7 +263,7 @@ export default function ReportPanel({ data }: { data: AppData }) {
         <h3 className="rsec-title">习惯打卡</h3>
         {stats.habitRows.length > 0 ? (
           stats.habitRows.map((h) => (
-            <div key={h.id} className="rhabit">
+            <div key={h.id} className={`rhabit${h.count === 0 ? ' zero' : ''}`}>
               <span className="rhabit-name" title={h.name}>
                 {h.name}
               </span>
@@ -232,16 +296,21 @@ export default function ReportPanel({ data }: { data: AppData }) {
         ) : comment ? (
           <>
             <p className="report-ai-text">{comment}</p>
-            <button className="btn ghost report-ai-btn" onClick={genComment} disabled={!configured}>
-              重新生成
-            </button>
+            <div className="report-ai-actions">
+              <button className="btn ghost report-ai-btn" onClick={genComment} disabled={!configured}>
+                重新生成
+              </button>
+              <button className="btn ghost report-ai-btn" onClick={copyComment}>
+                {copied ? '已复制 ✓' : '复制点评'}
+              </button>
+            </div>
           </>
         ) : configured ? (
           <button className="btn solid report-ai-btn" onClick={genComment}>
             让 AI 点评{week.label}
           </button>
         ) : (
-          <div className="empty-hint">在「Miku」页配置服务后,可让 AI 点评{week.label}</div>
+          <div className="empty-hint">在「Miku」页设置 AI 服务(接口地址 + 模型 + 密钥)后,可让 AI 点评{week.label}</div>
         )}
         {aiError && (
           <div className="ai-error">

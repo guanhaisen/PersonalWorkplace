@@ -4200,6 +4200,104 @@ kbd {
   margin-top: 8px;
 }
 
+/* 空周语境横幅:本周三样全零时给动态引导,周末顺手递上「看上周」 */
+.report-context {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  border: 1px dashed var(--accent-soft);
+  background: var(--accent-tint);
+  border-radius: 9px;
+  padding: 10px 14px;
+  margin-bottom: 10px;
+}
+
+.report-context p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--accent-deep);
+}
+
+.report-context-btn {
+  margin: 0;
+  height: 28px;
+  background: var(--card);
+}
+
+/* 环比标记:较上周 ±N */
+.rdelta {
+  display: block;
+  margin-top: 3px;
+  font-style: normal;
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--text-3);
+}
+
+.rdelta.good {
+  color: var(--accent);
+}
+
+.rdelta.bad {
+  color: var(--red);
+}
+
+/* 逾期清单:逾期了什么一眼可见 */
+.roverdue {
+  margin-bottom: 10px;
+  border: 1px solid var(--red-tint);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.roverdue-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px;
+  background: color-mix(in srgb, var(--red) 4%, var(--card));
+  font-size: 12.5px;
+}
+
+.roverdue-row + .roverdue-row {
+  border-top: 1px solid var(--red-tint);
+}
+
+.roverdue-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--red);
+}
+
+.roverdue-due {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* 全周零打卡的习惯行:淡化,不与有记录的行抢视线 */
+.rhabit.zero .rhabit-name {
+  color: var(--text-3);
+}
+
+.rhabit.zero .rdot {
+  opacity: 0.45;
+}
+
+.rhabit.zero .rhabit-rate {
+  color: var(--text-3);
+}
+
+/* AI 点评操作行:重新生成 + 复制并排 */
+.report-ai-actions {
+  display: flex;
+  gap: 8px;
+}
+
 /* ---------- 手机端适配(≤640px) ---------- */
 
 @media (max-width: 640px) {
