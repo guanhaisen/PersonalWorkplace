@@ -650,6 +650,11 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
   const cooling = (key: string) => Math.max(0, Math.ceil(((cdRef.current[key] ?? 0) - now) / 1000))
   const gameCooling = Math.max(0, Math.ceil((gameCdRef.current - now) / 1000))
 
+  // 舞台天色时段:夜晚(21-06,与 MikuStage 困困模式同边界)/黄昏(17-21)/白天,
+  // 心跳每秒重渲染顺带驱动,跨时段时 CSS transition 渐变过渡
+  const hourNow = new Date().getHours()
+  const timeBand = hourNow >= 21 || hourNow < 6 ? 'night' : hourNow >= 17 ? 'dusk' : 'day'
+
   // 冷却/锁定按钮的点击反馈:按钮不再用 disabled(收不到事件,触屏上完全无回应),
   // 改 aria-disabled 保持置灰样式,点了必须有声响——锁定说解锁条件,冷却抖一抖+
   // 节流台词(2s 内连点不刷屏)
@@ -776,7 +781,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
             </div>
           )}
           <div
-            className="raise-stage"
+            className={`raise-stage band-${timeBand}${mikuQQ ? ' is-qq' : ''}`}
             ref={stageRef}
             style={{ width: size.w, height: size.h }}
             role="button"
@@ -790,6 +795,20 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
             onDoubleClick={() => window.dispatchEvent(new CustomEvent(MIKU_QQ_EVENT))}
             title="摸摸她 · 长按摸头 · 拖一拖 · 双击变 QQ 形态"
           >
+            {/* 场景装饰层:天色/月亮星星云/地台/影子,纯 CSS 不碰 Live2D 画布 */}
+            <div className={`stage-scene scene-${timeBand}`} aria-hidden="true">
+              <i className="scene-moon" />
+              <i className="scene-star s1" />
+              <i className="scene-star s2" />
+              <i className="scene-star s3" />
+              <i className="scene-star s4" />
+              <i className="scene-star s5" />
+              <i className="scene-star s6" />
+              <i className="scene-cloud c1" />
+              <i className="scene-cloud c2" />
+              <div className="stage-ground" />
+              <div className="stage-shadow" />
+            </div>
             {!ready && !failed && (
               <div className="raise-loading">
                 <span className="boot-spinner" aria-hidden="true" />
