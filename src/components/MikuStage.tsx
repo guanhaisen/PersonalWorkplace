@@ -318,6 +318,8 @@ function MikuStageInner(
     normal: null,
     qq: null,
   })
+  // 影子跟随:上一帧写给 CSS 变量的值(变化超 0.5px 才写,避免每帧样式写入)
+  const shadowRelRef = useRef<number | null>(null)
   const slideBounds = (allowScan: boolean) => {
     const model = modelRef.current
     let half = model ? model.width / 2 : width * 0.35
@@ -442,7 +444,6 @@ function MikuStageInner(
       x: base.x + off + slideX,
       y: base.y + (entering ? qqOffsetYRef.current : 0),
     }
-    hostRef.current?.style.setProperty('--miku-slide-x', `${Math.round(slideX)}px`)
     bounceAtRef.current = performance.now()
     if (entering) {
       // 可见时才采得到:scanSilhouette 读的是已渲染像素,刚进 QQ 的支点平移
@@ -653,6 +654,9 @@ function MikuStageInner(
     void (async () => {
       try {
         await ensureCubismCore()
+        // 清理旧版机制残留在舞台盒节点上的影子变量(变量现由 onTick 每帧写在
+        // 本组件宿主上,旧值继承下来会把影子钉在过期位置)
+        hostRef.current?.parentElement?.style.removeProperty('--miku-slide-x')
         if (libFailed) throw new Error('Live2D 插件此前导入失败,不再重试')
         let Live2DModelCtor: typeof import('pixi-live2d-display/cubism4')['Live2DModel']
         try {
@@ -952,6 +956,17 @@ function MikuStageInner(
               mm.position.set(nx, ny)
             }
           }
+          // 影子跟随:每帧按模型「实际位置」同步 CSS 变量(单一写者)——拖动、
+          // 形态切换、自动校准,任何来源的移动都自动覆盖,影子不可能脱节。
+          // 普通形态扣除居中修正(QQ 形态无此项),变化超 0.5px 才写样式
+          const relX =
+            mm.position.x -
+            (qqTargetRef.current === 1 ? 0 : normalOffsetRef.current) -
+            width / 2
+          if (shadowRelRef.current === null || Math.abs(relX - shadowRelRef.current) > 0.5) {
+            shadowRelRef.current = relX
+            hostRef.current?.style.setProperty('--miku-slide-x', `${Math.round(relX)}px`)
+          }
         }
         app.ticker.add(onTick)
         readyRef.current = true
@@ -1142,11 +1157,6 @@ function MikuStageInner(
         width * 0.7,
       )
       basePosTargetRef.current = { ...basePosTargetRef.current, x: next }
-      // 影子跟随:影子住在本组件宿主内(随宿主重挂一起重置,不会与模型位置脱节)
-      hostRef.current?.style.setProperty(
-        '--miku-slide-x',
-        `${Math.round(slideXRef.current)}px`,
-      )
     }
     const onExpress = () => {
       if (!stageVisible()) return
