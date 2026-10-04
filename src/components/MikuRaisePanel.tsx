@@ -705,7 +705,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
       }
       return
     }
-    a.onClick()
+    a.onClick(e)
   }
 
   // 成就任务券:按当前互动计数实时推导各成就档位(票色与票根章位随之上走)
@@ -719,7 +719,8 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
     lock: number
     unlock?: Parameters<typeof hasUnlock>[1]
     cdKey: string
-    onClick: () => void
+    // feed 系处理器靠 e.currentTarget 定位食物起飞点(按钮矩形),事件必须能穿透进来
+    onClick: (e?: React.MouseEvent<HTMLButtonElement>) => void
   }
   const actions: ActionDef[] = [
     { key: 'pat', label: '摸摸头', lock: 0, cdKey: 'pat', onClick: doPat },

@@ -288,6 +288,10 @@ function MikuStageInner(
   // 表情/闲置彩蛋都是临时客串,结束后回到她。null = 无保留(临时表情结束即复原)。
   // 值为 DANCE_PIN 时 = 循环拿葱舞。刷新页面回默认待机,不做跨刷新记忆
   const pinnedRef = useRef<string | null>(null)
+  // 临时表情/一次性动作的截止时刻:掏葱、比心等姿势会改变可见剪影(比如大葱
+  // 伸向一侧),居中自检以「居中站姿」为测量前提,姿势期间介入会把姿势当偏移
+  // 修掉——喂食后整个人被平移,姿势结束再被拉回,表现为一喂就漂
+  const expressionUntilRef = useRef(0)
   // 循环拿葱舞的重启定时器(独立于表情复原定时器:临时表情不会打断舞蹈循环)
   const danceLoopTimerRef = useRef<number | undefined>(undefined)
   // PIXI Application 引用:IntersectionObserver 据此暂停/恢复渲染(离屏不烧 GPU)
@@ -362,6 +366,10 @@ function MikuStageInner(
       let maxX = -1
       let minGy = -1
       let maxGy = -1
+      // 每列必须扫完全高:不能「遇到首个不透明像素就 break」——人形直立时双腿
+      // 间隙那列扫到的首个像素是裙摆下缘,maxGy 会被记成裙摆而非头顶,
+      // getMouthAnchor 的嘴部纵坐标随之落到腰上(喂食食物飞进肚子的根因)。
+      // minGy(脚底)/minX/maxX 语义不受影响;开销只多出身体各列的上半段遍历
       for (let x = 0; x < bw; x += 2) {
         for (let y = 0; y < bh; y += 4) {
           if (px[(y * bw + x) * 4 + 3] > 10) {
@@ -369,7 +377,6 @@ function MikuStageInner(
             maxX = x
             if (minGy === -1 || y < minGy) minGy = y
             if (maxGy === -1 || y > maxGy) maxGy = y
-            break
           }
         }
       }
@@ -387,7 +394,11 @@ function MikuStageInner(
     if (!app) return null
     const sil = scanSilhouette()
     if (!sil) return null
-    const dx = app.renderer.width / 2 - (sil.minX + sil.maxX) / 2 / app.renderer.resolution
+    // PIXI 6 的 renderer.width 是设备像素(dpr>1 时 = 逻辑宽 × resolution),
+    // 逻辑宽在 renderer.screen.width——用错的话 dpr=1.5 时中点被抬高半块画布,
+    // 自检平衡点落在真实右偏 ~170px 处,喂食表情一动剪影就越过阈值继续右推
+    const cx = app.renderer.screen.width / 2
+    const dx = cx - (sil.minX + sil.maxX) / 2 / app.renderer.resolution
     return Math.abs(dx) < 0.5 ? 0 : dx
   }, [scanSilhouette])
 
@@ -403,8 +414,11 @@ function MikuStageInner(
         const sil = scanSilhouette()
         if (!sil) return null
         const res = app.renderer.resolution
-        const top = (app.renderer.height * res - sil.maxY) / res
-        const bottom = (app.renderer.height * res - sil.minY) / res
+        // 逻辑高取 renderer.screen.height(PIXI 6 的 renderer.height 是设备像素,
+        // 见 measureCenterDx 注释);GL 坐标 y 向上,翻转成 CSS 纵向
+        const H = app.renderer.screen.height
+        const top = H - sil.maxY / res
+        const bottom = H - sil.minY / res
         const x = (sil.minX + sil.maxX) / 2 / res
         const y = top + (bottom - top) * (qqTargetRef.current === 1 ? 0.38 : 0.23)
         return { x, y }
@@ -545,6 +559,7 @@ function MikuStageInner(
     const model = modelRef.current
     if (!model || !readyRef.current) return
     Promise.resolve(model.expression(name)).catch(() => undefined)
+    expressionUntilRef.current = performance.now() + ms
     window.clearTimeout(expressionTimerRef.current)
     expressionTimerRef.current = window.setTimeout(restoreExpressionSafe, ms)
   }
@@ -607,6 +622,7 @@ function MikuStageInner(
       })
       .catch(fallback)
     idleUntilRef.current = Date.now() + DANCE_MS
+    expressionUntilRef.current = performance.now() + DANCE_MS
     window.clearTimeout(expressionTimerRef.current)
     expressionTimerRef.current = window.setTimeout(restoreExpressionSafe, DANCE_MS)
   }
@@ -765,7 +781,10 @@ function MikuStageInner(
                   // 自然不对称——否则拖动位置会被当成偏移写进 normalOffset,整个人
                   // 被拉回画布中线(实测 slideX=163 时被锁入 -218 偏移)
                   const dx = sorted[1] + slideXRef.current
+                  // 姿势瞬态(表情/动作)期间不写修正:剪影不代表居中站姿,量出来
+                  // 的偏差会被锁进 normalOffset(进页面立刻投喂就可能触发)
                   if (Math.abs(dx) < 0.5 || Math.abs(dx) > height * 0.15) { done(); return }
+                  if (expressionUntilRef.current > performance.now()) { done(); return }
                   if (normalOffsetRef.current !== 0) { done(); return } // 后续轮次兜底,首轮成功即不再重复修正
                   normalOffsetRef.current = dx
                   model.position.x += dx
@@ -806,7 +825,10 @@ function MikuStageInner(
           let verifying = false
           centeringTimerRef.current = window.setInterval(() => {
             if (verifying || disposed || document.hidden || !stageVisible()) return
-            if (!readyRef.current || draggingRef.current || pinnedRef.current === DANCE_PIN) return
+            // 保留动作(舞蹈或 pinned 表情)是持久的不对称姿势,自检的数学以居中
+            // 站姿为前提;临时表情窗口(掏葱/比心等)同理,姿势期间不介入
+            if (!readyRef.current || draggingRef.current || pinnedRef.current !== null) return
+            if (expressionUntilRef.current > performance.now()) return
             // 用户拖动过:她站的位置由用户决定,自检的数学以「居中姿态」为前提,
             // 不再介入(否则会以各种基准把她拉来推去)
             if (slideXRef.current !== 0) return
