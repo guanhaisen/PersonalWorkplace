@@ -4497,6 +4497,36 @@ kbd {
     display: none;
   }
 
+  /* 收藏药丸窄屏精修:只留站点图标并放大铺满小方片,删除走「全部收藏」抽屉里每张卡的 ✕
+     (head-link-t/-x 仅存在于真实行与探测行,两者同构同步;抽屉卡片是 links-more-card 不受影响) */
+  .head-link {
+    padding: 6px;
+    border-radius: 10px;
+  }
+
+  .head-link-t {
+    display: none;
+  }
+
+  .head-link .link-ico,
+  .head-link .link-ico-letter {
+    width: 20px !important;
+    height: 20px !important;
+    border-radius: 6px;
+    /* 字母块回退的字号是内联样式,需 !important 覆盖 */
+    font-size: 11px !important;
+  }
+
+  .head-link-x {
+    display: none;
+  }
+
+  .head-link-add {
+    border-radius: 10px;
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+
   .head-link-form {
     flex: 1 1 100%;
     flex-wrap: wrap;
