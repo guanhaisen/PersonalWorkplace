@@ -499,8 +499,10 @@ function MikuStageInner(
       }
       const dx = measureCenterDx()
       // 用户拖动过(slideX ≠ 0)时,轮廓中心的水平偏差包含用户位移,不再叠加进
-      // 形态偏移缓存(否则拖动位移会被当成标定误差双倍写回);纵向与拖动无关照常
-      if (slideXRef.current === 0 && dx && Math.abs(dx) <= width * 0.2) {
+      // 形态偏移缓存(否则拖动位移会被当成标定误差双倍写回);纵向与拖动无关照常。
+      // 钳制按 15% 舞台高(与首次居中同一把尺,理由见 applyCentering 处注释):
+      // 合法修正随模型缩放 ∝ 舞台高,按画布宽算会把垃圾放行空间放大 3 倍
+      if (slideXRef.current === 0 && dx && Math.abs(dx) <= height * 0.15) {
         qqOffsetRef.current = (qqOffsetRef.current ?? 0) + dx
         basePosTargetRef.current.x += dx
       }
@@ -710,66 +712,97 @@ function MikuStageInner(
         // (水印.exp3.json 同款设置),已实测该参数无其他作用且跨帧保持
         ;(model.internalModel.coreModel as ParamWriter).setParameterValueById('Param137', 1)
         app.stage.addChild(model)
-        // 视觉居中:对 page 大舞台,出场 800ms(等头发物理稳定)后按实测偏移把
-        // 可见形象对到画布中线;悬浮球构图已调好不做此修正。
-        // 回读有撞上「渲染中途半帧」的风险(左半已画右半未画,轮廓中心被算歪),
-        // 因此三帧采样要求两两一致才取中位数;修正量超过画布宽 20% 一律视为
-        // 垃圾数据放弃(实测本模型真实修正约 16%,半帧垃圾在 ±35% 量级)——
-        // 钳制上限既要放行真实修正,又绝不能把人推出画布
+        // 揭幕:把「模型可见」从加载完成时刻拆出来。fab 变体就绪即揭幕;page
+        // 大舞台先在透明画布后面(见 index.css 的 .miku-stage:not(.ready) 规则)
+        // 静默测好居中修正再揭幕,她以修正后的位置随登场动画一次亮相,不再有
+        // 「加载完向修正方向跳一下」。测量链路每条退路都会揭幕,另有硬保底,
+        // 绝不会永远隐身
+        let revealed = false
+        const revealStage = () => {
+          if (disposed || revealed) return
+          revealed = true
+          setReady(true)
+          onReady?.()
+        }
+        // 视觉居中:对 page 大舞台,按实测偏移把可见形象对到画布中线;悬浮球
+        // 构图已调好不做此修正。回读有撞上「渲染中途半帧/陈旧帧」的风险(轮廓
+        // 中心被算歪),因此三帧采样要求两两一致才取中位数。修正量钳制按 15%
+        // 舞台高:合法修正来自模型网格不对称,量级随模型缩放 ∝ 舞台高(实测
+        // ~11%h);垃圾帧量级随画布宽走(半帧 ±35%w)。旧钳制按 20% 画布宽,
+        // 画布铺满容器(1025~1200px)后放行空间是合法值的 3 倍,实测 +173px 的
+        // 垃圾修正借此锁进 normalOffset,人停在中线右 24% 处——按高钳制后,
+        // 合法值留 ~1.35 倍余量,半帧垃圾全部拒收
         if (variant === 'page') {
           // 三帧一致性采样:两两差 ≤8px 视为稳定,取中位数;不一致重测一轮。
-          // 整轮失败(面板被节流 RAF 全停/连续撞上半帧等)按 2s 退避重试——
-          // 面板回到屏幕后 RAF 恢复,下一轮即可完成,居中不会因时序被永久放弃
-          const applyCentering = (attempt: number) => {
+          // 整轮失败(面板被节流 RAF 全停/连续撞上半帧等)由外层退避重试——
+          // 面板回到屏幕后 RAF 恢复,下一轮即可完成,居中不会因时序被永久放弃。
+          // done 承担揭幕职责,每条退出路径都必须调用
+          const applyCentering = (attempt: number, done: () => void) => {
             requestAnimationFrame(() => {
-              if (disposed || !model) return
-              // 用户已拖动:位置由用户决定,首回合自动居中让位(同周期自检)
-              if (slideXRef.current !== 0) return
+              if (disposed || !model) { done(); return }
+              // 用户已拖动:位置由用户决定,自动居中让位(同周期自检)
+              if (slideXRef.current !== 0) { done(); return }
               const samples: number[] = []
+              let reads = 0
               const next = () => {
                 requestAnimationFrame(() => {
-                  if (disposed || !model) return
+                  if (disposed || !model) { done(); return }
+                  // 采样预算:扫描持续失败(读到全零帧等)时作废本轮——采样循环
+                  // 吊死会把 done(揭幕)一起吊死,模型永远隐身
+                  if (++reads > 24) { done(); return }
                   const sample = measureCenterDx()
                   if (sample !== null) samples.push(sample)
                   if (samples.length < 3) {
                     window.setTimeout(next, 160)
                     return
                   }
-              const sorted = [...samples].sort((a, b) => a - b)
-              if (sorted[2] - sorted[0] > 8 && attempt < 2) {
-                applyCentering(attempt + 1) // 三帧不一致:多半撞上动作/半帧,重测一轮
-                return
-              }
-              // 用户已拖动过(slideX ≠ 0)时,测得的偏差包含用户位移本身,只修
-              // 自然不对称——否则拖动位置会被当成偏移写进 normalOffset,整个人
-              // 被拉回画布中线(实测 slideX=163 时被锁入 -218 偏移)
-              const dx = sorted[1] + slideXRef.current
-              if (Math.abs(dx) < 0.5 || Math.abs(dx) > width * 0.2) return
-                  if (normalOffsetRef.current !== 0) return // 后续轮次兜底,首轮成功即不再重复修正
+                  const sorted = [...samples].sort((a, b) => a - b)
+                  if (sorted[2] - sorted[0] > 8 && attempt < 2) {
+                    applyCentering(attempt + 1, done) // 三帧不一致:多半撞上动作/半帧,重测一轮
+                    return
+                  }
+                  // 用户已拖动过(slideX ≠ 0)时,测得的偏差包含用户位移本身,只修
+                  // 自然不对称——否则拖动位置会被当成偏移写进 normalOffset,整个人
+                  // 被拉回画布中线(实测 slideX=163 时被锁入 -218 偏移)
+                  const dx = sorted[1] + slideXRef.current
+                  if (Math.abs(dx) < 0.5 || Math.abs(dx) > height * 0.15) { done(); return }
+                  if (normalOffsetRef.current !== 0) { done(); return } // 后续轮次兜底,首轮成功即不再重复修正
                   normalOffsetRef.current = dx
                   model.position.x += dx
                   basePosRef.current.x += dx
                   basePosTargetRef.current.x += dx
+                  done()
                 })
               }
               next()
             })
           }
-          const scheduleCentering = (attempt: number) => {
+          // 首发 800ms(等头发物理稳定);首轮结束即揭幕(成不成都亮),没写成
+          // 再退避重测,最多三轮。重试前确认仍是「未修正且用户未拖动」状态,
+          // 不抢别的写者已定好的位置
+          const startCentering = (attempt: number) => {
             window.setTimeout(() => {
-              if (disposed || modelRef.current !== model) return
-              applyCentering(attempt)
-            }, 800 + attempt * 2000)
+              if (disposed || modelRef.current !== model) { revealStage(); return }
+              applyCentering(attempt, () => {
+                revealStage()
+                if (normalOffsetRef.current === 0 && attempt < 2) {
+                  window.setTimeout(() => {
+                    if (!disposed && modelRef.current === model && slideXRef.current === 0) {
+                      startCentering(attempt + 1)
+                    }
+                  }, 2000)
+                }
+              })
+            }, attempt === 0 ? 800 : 2000)
           }
-          scheduleCentering(0)
-          scheduleCentering(1)
-          scheduleCentering(2)
-          // 周期自检:一次性修正若在采样窗口撞上瞬态(动作摆动/半帧),反向垃圾
-          // 修正会被 normalOffsetRef 锁死整个会话(实测出现过残差 +94px、模型右缘
+          startCentering(0)
+          window.setTimeout(revealStage, 8000) // 测量链路全灭时的硬保底
+          // 周期自检:一次性修正若在采样窗口撞上瞬态(动作摆动/半帧),垃圾值
+          // 会被 normalOffsetRef 锁死整个会话(实测出现过残差 +94px、模型右缘
           // 裁切,刷新才恢复)。这里每 4s 复测自愈:三帧两两一致(≤8px,滤掉动作
           // 瞬态)且残差超过呼吸/发丝慢摆幅度(实测峰值 ±10px)才补;补偿叠加进
-          // 「当前形态」的偏移缓存,经 basePosTarget 平滑滑入,量级钳制与首次一致。
-          // 拖拽/舞蹈等主动摆动中不测,避免把摆动当成偏移
+          // 「当前形态」的偏移缓存,经 basePosTarget 平滑滑入。拖拽/舞蹈等主动
+          // 摆动中不测,避免把摆动当成偏移
           let verifying = false
           centeringTimerRef.current = window.setInterval(() => {
             if (verifying || disposed || document.hidden || !stageVisible()) return
@@ -780,8 +813,15 @@ function MikuStageInner(
             if (qqTargetRef.current === 1 && qqOffsetRef.current == null) return
             verifying = true
             const samples: number[] = []
+            let reads = 0
             const tick = () => {
               if (disposed) {
+                verifying = false
+                return
+              }
+              // 采样预算:扫描持续失败时放弃本轮。verifying 不能卡死——卡死后
+              // 自检永久失能,已锁入的垃圾修正就再也没人救了
+              if (++reads > 12) {
                 verifying = false
                 return
               }
@@ -801,11 +841,13 @@ function MikuStageInner(
               verifying = false
               const sorted = [...samples].sort((a, b) => a - b)
               if (sorted[2] - sorted[0] > 8) return
-              const fix = sorted[1]
-              if (Math.abs(fix) < 16) return
-              // 自检的 fix 是「往回纠」,量级交给结果约束:修正后的目标不允许偏离
-              // 画布中线超过 35%(真实居中修正约 14%);沿用首次的 20% fix 钳制会
-              // 拒收大残差(实测污染态残差 94px ≈ 25.5%),自检反而救不回来
+              const residual = sorted[1]
+              if (Math.abs(residual) < 16) return
+              // 单轮步长钳到 15% 舞台高(与首次同一把尺):>16 的残差只应来自
+              // 污染态,大残差分多轮收敛(±240 约四轮);单轮垃圾读数的最大伤害
+              // 也被压进同一钳制,不再可能一轮把人推出去 1/3 画布
+              const fix = Math.max(-height * 0.15, Math.min(height * 0.15, residual))
+              // 修正后的目标不允许偏离画布中线超过 35%
               const targetX = basePosTargetRef.current.x + fix
               if (Math.abs(targetX - width / 2) > width * 0.35) return
               if (qqTargetRef.current === 1) qqOffsetRef.current = (qqOffsetRef.current ?? 0) + fix
@@ -970,13 +1012,18 @@ function MikuStageInner(
         }
         app.ticker.add(onTick)
         readyRef.current = true
-        setReady(true)
         // 加载期间外部 QQ 状态可能已变化(如养成页先变形、本实例模型后就绪):
         // 就绪即对齐,避免「菜单勾着、立绘却是普通形态」
         if (qqOnRef.current !== undefined && (qqOnRef.current ? 1 : 0) !== qqTargetRef.current) {
           applyQQRef.current?.(qqOnRef.current, false)
         }
-        onReady?.()
+        // 揭幕:fab 就绪即亮相;page 由居中测量链路揭幕(见上方 page 块)——
+        // 测量期间画布保持透明,她带着修正后的位置一次登场,外层的召唤提示
+        // (onReady 驱动)也会多留到揭幕为止
+        if (variant !== 'page') {
+          setReady(true)
+          onReady?.()
+        }
       } catch (err) {
         console.warn('[miku] Live2D 初始化失败,回退为图标', err)
         if (!disposed) onFailed?.()

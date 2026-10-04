@@ -3821,6 +3821,13 @@ kbd {
   display: block;
 }
 
+/* 揭幕前画布保持透明:page 大舞台要先在幕后测好居中修正,再让模型以正确位置
+   随登场动画一次亮相(模型就绪即开始渲染,ready 类要等测量完成后才挂上);
+   fab 变体 ready 只晚渲染一两个提交,顺带消掉动画落地前的一瞬闪帧 */
+.miku-stage:not(.ready) canvas {
+  opacity: 0;
+}
+
 /* 登场动画:模型就绪的一瞬 canvas 从透明空帧变为有内容,加类重触发淡入上浮 */
 .miku-stage.ready canvas {
   animation: miku-enter 0.5s ease both;
