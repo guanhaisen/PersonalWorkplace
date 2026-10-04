@@ -11,6 +11,7 @@ import ShortcutsPanel from './components/ShortcutsPanel'
 import AiPanel from './components/AiPanel'
 import ReportPanel from './components/ReportPanel'
 import LinksBar from './components/LinksBar'
+import WebSearchBar from './components/WebSearchBar'
 import StartPageModal from './components/StartPageModal'
 import ReminderPopup from './components/ReminderPopup'
 import MikuStage, {
@@ -1427,7 +1428,11 @@ export default function App() {
             </p>
           </div>
 
-          <LinksBar links={data.links} update={update} />
+          {/* 头部中列:百度式搜索栏在上、收藏条在下 */}
+          <div className="head-center">
+            <WebSearchBar />
+            <LinksBar links={data.links} update={update} />
+          </div>
 
           <div className="top-right">
             <button

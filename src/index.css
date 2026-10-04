@@ -426,6 +426,162 @@ textarea::placeholder {
   display: none;
 }
 
+/* 总览头部中列:搜索栏在上、收藏条在下(接管原 .head-links 的中列职责) */
+
+.head-center {
+  flex: 1;
+  min-width: 0;
+  margin: 0 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  position: relative;
+  /* 联想下拉要盖住下方的面板卡片(.cell 在 DOM 中靠后且 position:relative) */
+  z-index: 30;
+}
+
+/* 列容器内收藏条满宽,折叠测量(clientWidth)才拿得到真实可用宽度 */
+.head-center .head-links {
+  flex: 0 0 auto;
+  width: 100%;
+  margin: 0;
+}
+
+/* ---------- 百度式搜索栏 ---------- */
+
+.ws-bar {
+  position: relative;
+  width: 100%;
+  max-width: 560px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 5px 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.ws-bar:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+
+.ws-glyph {
+  display: inline-flex;
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+
+.ws-glyph svg {
+  width: 15px;
+  height: 15px;
+}
+
+.ws-bar input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 14px;
+  color: var(--ink);
+  font-family: inherit;
+}
+
+.ws-bar input::placeholder {
+  color: var(--muted);
+}
+
+.ws-clear {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ws-clear:hover {
+  color: var(--ink);
+  background: var(--line-soft);
+}
+
+.ws-go {
+  flex: 0 0 auto;
+  height: 32px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: filter 0.15s ease;
+}
+
+.ws-go:hover {
+  filter: brightness(1.08);
+}
+
+.ws-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 24px 64px rgba(16, 24, 40, 0.18);
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+  z-index: 40;
+}
+
+.ws-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  border-radius: 7px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.ws-item svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.ws-item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-item.active,
+.ws-item:hover {
+  background: var(--accent-tint);
+}
+
 /* 总览头部中间:网页收藏条 */
 
 .head-links {
@@ -4306,7 +4462,7 @@ kbd {
 /* ---------- 手机端适配(≤640px) ---------- */
 
 @media (max-width: 640px) {
-  /* 头部:问候与按钮换行,收藏条整行横滚 */
+  /* 头部:问候与按钮换行,搜索栏+收藏条整行铺满 */
   .app-header {
     flex-wrap: wrap;
     row-gap: 10px;
@@ -4316,10 +4472,18 @@ kbd {
     font-size: 20px;
   }
 
-  .head-links {
+  .head-center {
     order: 3;
     flex-basis: 100%;
     margin: 0;
+  }
+
+  /* 搜索框窄屏铺满整行 */
+  .ws-bar {
+    max-width: none;
+  }
+
+  .head-links {
     justify-content: flex-start;
   }
 
