@@ -4328,6 +4328,11 @@ kbd {
     flex-wrap: wrap;
   }
 
+  /* 添加收藏按钮窄屏只留加号;探测行同构同步,折叠测量不受影响 */
+  .head-link-add .head-link-add-label {
+    display: none;
+  }
+
   .head-link-form {
     flex: 1 1 100%;
     flex-wrap: wrap;
@@ -5660,6 +5665,13 @@ kbd {
     flex: none;
     flex-direction: column;
     padding: 12px 14px 12px;
+  }
+
+  /* 窄屏头部放不下标题+四枚徽章(?/成就券/连续天数/等级):允许换行,
+     徽章条整体落到标题下方;更窄屏由徽章条内部换行兜底 */
+  .raise-head,
+  .raise-head-badges {
+    flex-wrap: wrap;
   }
 
   .raise-stage-wrap {

@@ -552,7 +552,7 @@ export default function LinksBar({ links, update }: Props) {
           +99<span className="more-chev">▾</span>
         </button>
         <button type="button" className="head-link-add" tabIndex={-1}>
-          ＋ 收藏网页
+          ＋<span className="head-link-add-label">&nbsp;收藏网页</span>
         </button>
         {adding === 'header' && (
           <span className="head-link-form">
@@ -649,7 +649,7 @@ export default function LinksBar({ links, update }: Props) {
           </span>
         ) : (
           <button className="head-link-add" title="收藏一个网页地址" onClick={() => setAdding('header')}>
-            ＋ 收藏网页
+            ＋<span className="head-link-add-label">&nbsp;收藏网页</span>
           </button>
         )}
       </div>
