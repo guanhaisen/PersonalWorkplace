@@ -13,7 +13,7 @@ const DB_FILE = path.join(DATA_DIR, 'workbench.db')
 const BACKUP_DIR = path.join(DATA_DIR, 'backups')
 const BACKUP_KEEP = 10 // 保留的最近启动备份数
 
-export const COLLECTIONS = ['todos', 'courses', 'habits', 'chats', 'links', 'reminders']
+export const COLLECTIONS = ['todos', 'courses', 'habits', 'chats', 'links', 'reminders', 'notes', 'reports']
 const SESSION_TTL_MS = 30 * 24 * 3600 * 1000
 
 fs.mkdirSync(DATA_DIR, { recursive: true })

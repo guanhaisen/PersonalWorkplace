@@ -123,6 +123,22 @@ export function IconReport() {
   )
 }
 
+/** 随手记:折角便签与笔迹 */
+export function IconNotes() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M2.8 3.6c0-.9.7-1.6 1.6-1.6h4.6l4.2 4.2v6.2c0 .9-.7 1.6-1.6 1.6H4.4c-.9 0-1.6-.7-1.6-1.6V3.6Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <path d="M9 2.2v3.6c0 .6.4 1 1 1h3.4" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M5.4 8.6h5.2M5.4 11.2h3.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 export function IconSearch() {
   return (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">

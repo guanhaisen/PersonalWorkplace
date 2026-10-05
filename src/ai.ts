@@ -1,6 +1,6 @@
 // Miku(原 AI 助手):配置接口封装、OpenAI 兼容请求、工具 Schema 与数据快照构建。
 // 密钥只存在服务端数据库(按账号隔离),前端只传消息与工具定义。
-import type { AppData } from './types'
+import type { AppData, ChatUsage } from './types'
 import { streak, todayStr } from './api'
 
 // ---------- 配置 ----------
@@ -145,11 +145,37 @@ export const AI_TOOLS = [
   },
   {
     type: 'function',
+    function: fn('add_note', '帮用户往随手记里记一笔(会自动触发 AI 整理进当日日报)', {
+      content: { type: 'string', description: '要记录的内容,保留用户原意' },
+    }, ['content']),
+  },
+  {
+    type: 'function',
+    function: fn('search_notes', '按关键词搜索用户的随手记原文(不是 AI 整理后的日报)', {
+      keyword: { type: 'string', description: '关键词' },
+      dateFrom: { type: 'string', description: '起始日期 YYYY-MM-DD(含),可选' },
+      dateTo: { type: 'string', description: '结束日期 YYYY-MM-DD(含),可选' },
+    }, ['keyword']),
+  },
+  {
+    type: 'function',
+    function: fn('read_daily_report', '读取某一天的 AI 日报全文', {
+      date: { type: 'string', description: '日期 YYYY-MM-DD' },
+    }, ['date']),
+  },
+  {
+    type: 'function',
+    function: fn('read_weekly_report', '读取某一周的 AI 周报全文', {
+      week: { type: 'string', description: 'ISO 周标识(如 2026-W41)或该周内任一天日期 YYYY-MM-DD' },
+    }, ['week']),
+  },
+  {
+    type: 'function',
     function: fn('switch_view', '切换到某个页面展示给用户', {
       view: {
         type: 'string',
-        enum: ['overview', 'todos', 'schedule', 'habits', 'ai', 'raise', 'report'],
-        description: '目标页面;raise 是 Miku 养成页(互动/喂食/聊天)',
+        enum: ['overview', 'todos', 'schedule', 'habits', 'notes', 'ai', 'raise', 'report'],
+        description: '目标页面;raise 是 Miku 养成页(互动/喂食/聊天),notes 是随手记(AI 日报/周报)',
       },
     }, ['view']),
   },
@@ -215,6 +241,16 @@ export function buildDataSnapshot(data: AppData): string {
     lines.push(`- id:${r.id} ${cut(r.title, 60)} @${r.dueAt}`)
   }
 
+  lines.push('')
+  const noteDates = data.notes.map((n) => n.date).sort()
+  const dailyN = data.reports.filter((r) => r.kind === 'daily').length
+  const weeklyN = data.reports.filter((r) => r.kind === 'weekly').length
+  lines.push(
+    `[随手记] 共 ${data.notes.length} 条${
+      noteDates.length ? `(最早 ${noteDates[0]},最近 ${noteDates[noteDates.length - 1]})` : ''
+    };已生成日报 ${dailyN} 篇、周报 ${weeklyN} 篇(正文可用工具读取)`,
+  )
+
   return lines.join('\n')
 }
 
@@ -225,6 +261,7 @@ export function buildSystemPrompt(data: AppData): string {
   return [
     `你是「个人工作台」(一个本地个人效率工具,含待办/课表/习惯打卡/定时提醒)里的助手 Miku。今天是 ${today} 星期${WEEKDAYS[now.getDay()]},现在时刻 ${hm}。`,
     '下面是用户的实时数据快照。回答数据相关问题时以快照为准;用户要求修改数据时调用工具完成,不要编造 id,只用快照里出现的 id。',
+    '快照不含随手记和日报/周报的正文;用户问起过往的记录时,用 search_notes / read_daily_report / read_weekly_report 工具查询后如实回答,查不到就说没有,不要编造。',
     '修改完成后用一句话向用户确认;闲聊与问答保持简洁,全程使用中文。',
     '',
     buildDataSnapshot(data),
@@ -293,4 +330,119 @@ export function buildReportMessages(week: { label: string; start: string; end: s
       content: `以下是「${week.label}」(${week.start} ~ ${week.end})的统计数据:\n${week.lines.join('\n')}\n\n请写周报点评。`,
     },
   ]
+}
+
+// ---------- 随手记整理:AI 日报 / AI 周报 ----------
+// 设计原则(借鉴 SpringNote 的思路,prompt 为本项目自写):
+// 严格保留事实、像用户自己写的、不套模板;AI 失败时由 notesOrg.ts 降级为本地合并,内容永不丢。
+
+/** 模型偶尔会用 ```markdown 围栏包住正文,剥掉(无围栏时原样返回) */
+function stripFence(text: string): string {
+  const m = /^```(?:markdown|md)?\s*\n([\s\S]*?)\n?```$/.exec(text.trim())
+  return (m ? m[1] : text).trim()
+}
+
+export interface DailyMergeArgs {
+  /** YYYY-MM-DD */
+  date: string
+  /** '一' ~ '日' */
+  weekday: string
+  /** 已有日报 markdown;'' 表示当天还没有日报 */
+  existing: string
+  /** 待整理的随手记录(按时间序) */
+  entries: { time: string; content: string }[]
+}
+
+export function buildDailyMergeMessages({ date, weekday, existing, entries }: DailyMergeArgs): UpstreamMessage[] {
+  return [
+    {
+      role: 'system',
+      content: [
+        '你是「个人工作台」的日报整理助手。把用户的已有日报与今日随手记录融合成一篇当天最新的日报,输出 markdown 正文。',
+        '整理要求:',
+        '1. 严格保留事实:不编造不存在的任务、时间、人员、原因、进展、结果、计划、评价或情绪。',
+        '2. 已有日报存在时,把新增记录自然融合进去重写全文,优先保留其中仍然有效的内容,重复的内容只保留表达更完整的一份;已有日报为空时,直接依据新增记录整理成日报。',
+        '3. 新增记录只是关键词或短语时,整理成通顺完整的表达,但扩展只服务于把已有事实说清楚,不得引入新的事实。',
+        '4. 结构自由:内容少就简洁成段,内容多可按主题分段或用列表;不要套固定栏目,不要为了分组而分组。',
+        '5. 语气自然克制,像用户自己认真整理的日报;不要 AI 总结腔,不要寒暄,不要解释整理过程。',
+        '6. 只输出最终 markdown,不要输出任何说明文字。',
+      ].join('\n'),
+    },
+    {
+      role: 'user',
+      content: [
+        `日期:${date}(星期${weekday})`,
+        '',
+        '【已有日报】',
+        existing.trim() || '(空)',
+        '',
+        '【今日随手记录】',
+        entries.map((e) => `- ${e.time} ${e.content}`).join('\n') || '(空)',
+        '',
+        '请输出整理后的日报。',
+      ].join('\n'),
+    },
+  ]
+}
+
+export interface WeeklyReportArgs {
+  /** ISO 周标识,如 2026-W41 */
+  weekKey: string
+  start: string
+  end: string
+  /** 一周日报拼成的来源 markdown(每天一节) */
+  source: string
+}
+
+export function buildWeeklyReportMessages({ weekKey, start, end, source }: WeeklyReportArgs): UpstreamMessage[] {
+  return [
+    {
+      role: 'system',
+      content: [
+        '你是「个人工作台」的周报整理助手。基于用户一周的日报,写一篇有重点、可直接留存的周报 markdown。',
+        '写作要求:',
+        '1. 保留来源中的事实,不编造没有依据的成果、风险或计划。',
+        '2. 不套固定栏目,按材料自由组织:可用标题、段落、列表和小结,把这一周做了什么、推进到哪里、卡在哪里、下一步是什么讲清楚。',
+        '3. 语气自然克制,像认真复盘的人写的周报,不要 AI 模板腔,不要寒暄和解释。',
+        `4. 全文第一行固定为一级标题 \`# ${weekKey} 周报\`,不得自拟、追加或省略。`,
+        '5. 只输出最终 markdown。',
+      ].join('\n'),
+    },
+    {
+      role: 'user',
+      content: [
+        `周期:${weekKey}(${start} ~ ${end})`,
+        '',
+        '【本周日报】',
+        source,
+        '',
+        '请写这一周的周报。',
+      ].join('\n'),
+    },
+  ]
+}
+
+async function generateMarkdown(
+  messages: UpstreamMessage[],
+  signal?: AbortSignal,
+): Promise<{ text: string; usage?: ChatUsage }> {
+  const res = await aiChat({ messages }, signal)
+  const raw = res.message?.content?.trim()
+  if (!raw) throw new Error('AI 没有返回内容')
+  return {
+    text: stripFence(raw),
+    usage: res.usage
+      ? { prompt: res.usage.prompt_tokens, completion: res.usage.completion_tokens, total: res.usage.total_tokens }
+      : undefined,
+  }
+}
+
+/** 调 AI 把随手记录整理进当日日报;失败抛错,由调用方降级为本地合并 */
+export function generateDailyReport(args: DailyMergeArgs, signal?: AbortSignal) {
+  return generateMarkdown(buildDailyMergeMessages(args), signal)
+}
+
+/** 调 AI 依据一周日报写周报;失败抛错 */
+export function generateWeeklyReport(args: WeeklyReportArgs, signal?: AbortSignal) {
+  return generateMarkdown(buildWeeklyReportMessages(args), signal)
 }

@@ -27,7 +27,8 @@ import MikuStage, {
 } from './components/MikuStage'
 import MikuRaisePanel from './components/MikuRaisePanel'
 import MikuMenu, { type MikuMenuItem } from './components/MikuMenu'
-import { BrandMark, IconAi, IconCalendar, IconGitHub, IconGrip, IconHabit, IconHeart, IconKeys, IconOverview, IconReport, IconSchedule, IconTodo } from './components/icons'
+import { BrandMark, IconAi, IconCalendar, IconGitHub, IconGrip, IconHabit, IconHeart, IconKeys, IconNotes, IconOverview, IconReport, IconSchedule, IconTodo } from './components/icons'
+import NotesView from './components/NotesView'
 import CommandPalette, { type Command } from './components/CommandPalette'
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
@@ -37,16 +38,16 @@ export type UpdateFn = <K extends CollectionKey>(
   updater: (items: AppData[K]) => AppData[K],
 ) => void
 
-export type ViewKey = 'overview' | 'todos' | 'schedule' | 'habits' | 'ai' | 'raise' | 'report'
+export type ViewKey = 'overview' | 'todos' | 'schedule' | 'habits' | 'notes' | 'ai' | 'raise' | 'report'
 
 // ---------- 总览布局:两行卡槽,拖拽互换 ----------
 
-type PanelId = 'todo' | 'schedule' | 'cal' | 'hab' | 'keys' | 'ai' | 'report'
+type PanelId = 'todo' | 'schedule' | 'cal' | 'hab' | 'keys' | 'ai' | 'report' | 'notes'
 type Rows = PanelId[][]
 
-// 总览可放置的 5 张卡:课表卡固定占两列,其余单列;ai / report 面板常驻挂载但不进总览槽位
+// 总览可放置的 5 张卡:课表卡固定占两列,其余单列;ai / report / notes 面板常驻挂载但不进总览槽位
 const SLOT_IDS: PanelId[] = ['todo', 'schedule', 'cal', 'hab', 'keys']
-const PANEL_IDS: PanelId[] = [...SLOT_IDS, 'ai', 'report']
+const PANEL_IDS: PanelId[] = [...SLOT_IDS, 'ai', 'report', 'notes']
 const LAYOUT_KEY = 'overview.layout.v4'
 
 const DEFAULT_SLOTS: PanelId[] = ['todo', 'hab', 'cal', 'schedule', 'keys']
@@ -90,6 +91,7 @@ const NAV_META: Record<ViewKey, { label: string; icon: JSX.Element }> = {
   ai: { label: 'Miku', icon: <IconAi /> },
   raise: { label: '养成', icon: <IconHeart /> },
   report: { label: '周报', icon: <IconReport /> },
+  notes: { label: '随手记', icon: <IconNotes /> },
 }
 
 // 手机端总览的胶囊头:卡片折叠为胶囊,点开一张、收起其余
@@ -101,11 +103,12 @@ const CAPSULE_META: Record<PanelId, { label: string; icon: JSX.Element }> = {
   keys: { label: '快捷键', icon: <IconKeys /> },
   ai: { label: 'Miku', icon: <IconAi /> },
   report: { label: '周报', icon: <IconReport /> },
+  notes: { label: '随手记', icon: <IconNotes /> },
 }
 
 // 导航顺序可自由调整(拖拽),数字快捷键跟随位置
 const NAV_KEY = 'nav.order.v1'
-const DEFAULT_NAV: ViewKey[] = ['overview', 'todos', 'schedule', 'habits', 'ai', 'raise', 'report']
+const DEFAULT_NAV: ViewKey[] = ['overview', 'todos', 'schedule', 'habits', 'notes', 'ai', 'raise', 'report']
 
 function loadNavOrder(): ViewKey[] {
   try {
@@ -1049,6 +1052,10 @@ export default function App() {
         return
       }
       switch (e.key) {
+        case 'm':
+          setView('notes')
+          emit('workbench:focus-note-input')
+          break
         case 'n':
           setView('schedule')
           emit('workbench:new-course')
@@ -1075,6 +1082,7 @@ export default function App() {
     })),
     { id: 'new-course', label: '新建课程', hint: 'N', run: () => { setView('schedule'); emit('workbench:new-course') } },
     { id: 'new-todo', label: '新建待办', hint: 'T', run: () => { setView('todos'); emit('workbench:focus-todo-input') } },
+    { id: 'new-note', label: '记一笔随手记', hint: 'M', run: () => { setView('notes'); setTimeout(() => emit('workbench:focus-note-input'), 0) } },
     { id: 'ask-ai', label: '询问 Miku', run: () => { setView('ai'); setTimeout(() => emit('workbench:ai-focus'), 0) } },
     { id: 'export', label: '导出全部数据', run: handleExport },
     // 头部低频工具在手机上收进面板(桌面头部按钮保留,面板里也有一份)
@@ -1476,6 +1484,7 @@ export default function App() {
             keys: <ShortcutsPanel onOpenPalette={() => setPaletteOpen(true)} />,
             ai: <AiPanel data={data} update={update} onNavigate={setView} />,
             report: <ReportPanel data={data} />,
+            notes: <NotesView data={data} update={update} />,
           }
           // 各视图的行结构;总览行结构随课表卡位置自适应,其余面板保持挂载(隐藏)
           const w = slots.indexOf('schedule')
@@ -1489,6 +1498,7 @@ export default function App() {
             todos: [['todo']],
             schedule: [['schedule']],
             habits: [['hab']],
+            notes: [['notes']],
             ai: [['ai']],
             // 养成页不进面板网格(独立渲染在 board 之后),board 借 CSS 隐藏
             raise: [],

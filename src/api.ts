@@ -1,6 +1,6 @@
 import type { AppData } from './types'
 
-export type CollectionKey = 'todos' | 'courses' | 'habits' | 'chats' | 'links' | 'reminders'
+export type CollectionKey = 'todos' | 'courses' | 'habits' | 'chats' | 'links' | 'reminders' | 'notes' | 'reports'
 
 /** 带 HTTP 状态码的错误:401 表示未登录/会话过期,调用方据此回到登录页 */
 export class ApiError extends Error {

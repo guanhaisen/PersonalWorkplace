@@ -4,9 +4,10 @@ interface Props {
 
 const SHORTCUTS: { keys: string; label: string }[] = [
   { keys: '⌘K', label: '命令面板' },
-  { keys: '1-6', label: '切换视图' },
+  { keys: '1-8', label: '切换视图' },
   { keys: 'N', label: '新建课程' },
   { keys: 'T', label: '新建待办' },
+  { keys: 'M', label: '记一笔随手记' },
 ]
 
 export default function ShortcutsPanel({ onOpenPalette }: Props) {

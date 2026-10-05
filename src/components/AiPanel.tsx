@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { AppData, ChatUsage } from '../types'
+import type { AppData, ChatUsage, NoteEntry } from '../types'
 import type { UpdateFn, ViewKey } from '../App'
 import { todayStr, uid, nowLocalStr, DUE_AT_RE } from '../api'
+import { readDailyReport, readWeeklyReport, searchNotes } from '../notesOrg'
 import {
   AI_TOOLS,
   aiChat,
@@ -36,7 +37,7 @@ const PRESETS: { label: string; baseUrl: string; model: string }[] = [
   { label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
 ]
 
-const VIEWS: ViewKey[] = ['overview', 'todos', 'schedule', 'habits', 'ai', 'raise', 'report']
+const VIEWS: ViewKey[] = ['overview', 'todos', 'schedule', 'habits', 'notes', 'ai', 'raise', 'report']
 const nowIso = () => new Date().toISOString()
 
 export default function AiPanel({
@@ -211,6 +212,41 @@ export default function AiPanel({
         if (!d.reminders.some((r) => r.id === id)) return { ok: false, error: `未找到提醒 ${id}` }
         applyToolUpdate('reminders', (items) => items.filter((r) => r.id !== id))
         return { ok: true }
+      }
+      case 'add_note': {
+        const content = str(args.content)
+        if (!content) return { ok: false, error: 'content 为空' }
+        const entry: NoteEntry = { id: uid(), content, date: todayStr(), ts: nowIso() }
+        applyToolUpdate('notes', (items) => [...items, entry])
+        // 通知随手记视图触发 AI 整理(带原始条目,补偿数据尚未回流到该视图 ref 的竞态)
+        window.dispatchEvent(new CustomEvent('workbench:note-added', { detail: entry }))
+        return { ok: true, noteId: entry.id, note: '已记入随手记,正在整理进今日日报' }
+      }
+      case 'search_notes': {
+        const keyword = str(args.keyword)
+        if (!keyword) return { ok: false, error: 'keyword 为空' }
+        const { hits, total } = searchNotes(d, {
+          keyword,
+          dateFrom: str(args.dateFrom) || undefined,
+          dateTo: str(args.dateTo) || undefined,
+        })
+        if (!total) return { ok: true, results: [], note: '没有匹配的随手记' }
+        return {
+          ok: true,
+          total,
+          results: hits,
+          note: total > hits.length ? `共 ${total} 条,仅返回最早的 ${hits.length} 条` : undefined,
+        }
+      }
+      case 'read_daily_report': {
+        const date = str(args.date)
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'date 需为 YYYY-MM-DD' }
+        return readDailyReport(d, date)
+      }
+      case 'read_weekly_report': {
+        const week = str(args.week)
+        if (!week) return { ok: false, error: 'week 为空' }
+        return readWeeklyReport(d, week)
       }
       case 'switch_view': {
         const view = str(args.view) as ViewKey

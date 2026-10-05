@@ -70,6 +70,33 @@ export interface Reminder {
   firedAt?: string
 }
 
+/** 随手记的一条原始记录(「AI 智能整理」的原料) */
+export interface NoteEntry {
+  id: string
+  /** 用户原文 */
+  content: string
+  /** 归属日 YYYY-MM-DD(按提交时刻的本地日期) */
+  date: string
+  /** 创建时间 ISO 字符串 */
+  ts: string
+}
+
+/** AI 整理出的日报/周报(markdown 全文) */
+export interface GenReport {
+  /** 日报 = YYYY-MM-DD,周报 = ISO 周标识 YYYY-Www */
+  id: string
+  kind: 'daily' | 'weekly'
+  /** 当前展示用 markdown 正文(AI 失败时为本地兜底合并版) */
+  content: string
+  /** true = 内容出自 AI 整理;false = 本地兜底合并(可在界面重试 AI) */
+  ai: boolean
+  /** 已触发整理但尚未被 AI 成文吸收的随手记 id(仅 ai:true 时有意义) */
+  pendingIds?: string[]
+  updatedAt: string
+  /** 最近一次整理的 token 用量(服务商未返回时不存) */
+  usage?: ChatUsage
+}
+
 export interface AppData {
   todos: Todo[]
   courses: Course[]
@@ -77,4 +104,6 @@ export interface AppData {
   chats: ChatMsg[]
   links: LinkItem[]
   reminders: Reminder[]
+  notes: NoteEntry[]
+  reports: GenReport[]
 }
