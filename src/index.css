@@ -1949,35 +1949,7 @@ textarea::placeholder {
   color: #fff;
 }
 
-/* 当前时间指示线:本周今天列、当下所在的大节区间内,按时间比例画红线 */
-.sch-td {
-  position: relative;
-}
-
-.sch-now {
-  position: absolute;
-  left: 3px;
-  right: 3px;
-  height: 2px;
-  z-index: 3;
-  background: var(--red);
-  border-radius: 2px;
-  pointer-events: none;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--red) 16%, transparent);
-}
-
-.sch-now::before {
-  content: '';
-  position: absolute;
-  left: -2px;
-  top: -2.5px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--red);
-}
-
-/* 进行中/下一节:课程卡描边 + 角标(仅本周今天列) */
+/* 进行中/下一节:进行中卡片轻浮起 + 柔和托底影,下一节仅角标(仅本周今天列) */
 .crs {
   position: relative;
 }
@@ -1998,15 +1970,15 @@ textarea::placeholder {
 }
 
 .crs.ongoing {
-  box-shadow: 0 0 0 2px var(--red);
+  /* 无描边:像 hover 一样轻微上浮 + 柔和托底影,用质感而非线圈标记「进行中」 */
+  transform: translateY(-2px);
+  box-shadow:
+    0 2px 4px rgba(29, 38, 34, 0.06),
+    0 8px 20px rgba(29, 38, 34, 0.12);
 }
 
 .crs.up-next .crs-badge {
   background: var(--accent);
-}
-
-.crs.up-next {
-  box-shadow: 0 0 0 2px var(--accent);
 }
 
 /* 危险按钮与武装确认态(编辑弹窗「删除课程」) */
@@ -2250,7 +2222,10 @@ textarea::placeholder {
   /* 铺满所在格子:宽度吃满、多卡时按比例分摊行高,构成实心课表格 */
   width: 100%;
   flex: 1 1 auto;
-  transition: filter 0.15s ease;
+  transition:
+    filter var(--t-fast) var(--ease-out),
+    transform var(--t-fast) var(--ease-out),
+    box-shadow var(--t-fast) var(--ease-out);
 }
 
 .crs:hover {

@@ -89,7 +89,7 @@ export default function SchedulePanel({ courses, update }: Props) {
   // 周次:学期开始日期(第一周周一)存 localStorage,当前周自动推算,可手动切换查看
   const [termStart, setTermStart] = useState(() => localStorage.getItem(TERM_KEY) ?? '')
   const [week, setWeek] = useState(() => computeCurrentWeek(localStorage.getItem(TERM_KEY) ?? ''))
-  // 当前时间每 30 秒刷新一次,驱动今日高亮与时间指示线
+  // 当前时间每 30 秒刷新一次,驱动今日高亮与「进行中/下一节」标记
   const [now, setNow] = useState(() => new Date())
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 30_000)
@@ -538,18 +538,12 @@ export default function SchedulePanel({ courses, update }: Props) {
               </div>
               {WEEKDAYS.map((w, i) => {
                 const list = cellMap.map.get(`${b.label}|${i + 1}`) ?? []
-                // 当前时间指示线:仅本周的今天列、且当下落在这个大节区间内时,
-                // 按区间内的时间比例画红线(格子按卡片流布局,位置是近似值)
-                const showNow =
-                  isThisWeek && i === todayIdx && nowMin >= b.startMin && nowMin < b.endMin
-                const nowPct = ((nowMin - b.startMin) / (b.endMin - b.startMin)) * 100
                 return (
                   <div
                     key={`${b.label}|${w}`}
                     className={`sch-td ${i === todayIdx ? 'today' : ''}`}
                     onClick={(e) => onCellClick(i + 1, b, e)}
                   >
-                    {showNow && <i className="sch-now" style={{ top: `${nowPct}%` }} aria-hidden="true" />}
                     {list.map(renderCard)}
                   </div>
                 )
