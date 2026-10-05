@@ -4662,7 +4662,7 @@ kbd {
     display: none;
   }
 
-  /* 底部图标导航:7 项均分,只留图标 */
+  /* 底部导航:8 项均分,图标 + 10px 小标签竖排,识别不靠猜 */
   .nav {
     position: fixed;
     left: 0;
@@ -4674,7 +4674,7 @@ kbd {
     flex-wrap: nowrap;
     justify-content: space-around;
     gap: 0;
-    padding: 4px 6px calc(4px + env(safe-area-inset-bottom));
+    padding: 5px 8px calc(5px + env(safe-area-inset-bottom));
     background: var(--paper-2);
     border-top: 1px solid var(--line);
   }
@@ -4682,20 +4682,42 @@ kbd {
   .nav-item {
     flex: 1;
     min-width: 0;
-    height: 46px;
+    height: 52px;
+    flex-direction: column;
     justify-content: center;
-    gap: 0;
-    padding: 0;
+    gap: 3px;
+    padding: 0 2px;
+    border-radius: 8px;
   }
 
-  .nav-item .no,
-  .nav-item .lab {
+  .nav-item .no {
     display: none;
+  }
+
+  .nav-item .lab {
+    font-size: 10px;
+    line-height: 1;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
   }
 
   .nav-item svg {
     width: 21px;
     height: 21px;
+  }
+
+  /* 选中态:顶部圆头短横条(替代桌面侧栏的左侧竖条,横排栏的语言) */
+  .nav-item.active::before {
+    left: 50%;
+    right: auto;
+    top: 0;
+    bottom: auto;
+    width: 18px;
+    height: 3px;
+    border-radius: 0 0 3px 3px;
+    transform: translateX(-50%);
+    background: linear-gradient(90deg, var(--accent), var(--accent-deep));
   }
 
   /* 内容与卡片:收窄留白,单列堆叠;底部给导航栏留出空间 */
