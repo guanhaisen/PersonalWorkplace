@@ -4832,6 +4832,29 @@ kbd {
     white-space: nowrap;
   }
 
+  /* 课表头部:窄屏把头部右侧(共 N 门·下一节…+导入/＋课程)拆进标题行布局——
+     按钮与「SCHEDULE / 课表」同行靠右,长文案整行在下;整体最小内容宽曾超面板
+     导致整块溢出屏幕且无滚动条可救,拆行后各项始终可达。display:contents 让
+     文案/按钮成为 p-head 的直接 flex 项参与换行,DOM 不动、桌面布局不变 */
+  .sch-head-right {
+    display: contents;
+  }
+
+  .panel-schedule .p-head {
+    justify-content: flex-start;
+  }
+
+  .panel-schedule .sch-add.ghost {
+    margin-left: auto;
+  }
+
+  .sch-head-right .p-meta {
+    order: 3;
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
   /* 登录卡:小屏收窄内边距 */
   .auth-card {
     padding: 22px 18px 18px;
