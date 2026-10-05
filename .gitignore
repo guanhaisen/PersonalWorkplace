@@ -1,11 +1,18 @@
 node_modules/
 dist/
 .zcode/
+.zcodeignore
 design-demos/
 data/
 .deploy/
 .workbuddy/
 .wbapp_*.genie
+
+# 环境变量与密钥(防御性规则:将来引入 .env / 证书时也不会误传)
+.env*
+*.local
+*.pem
+*.key
 
 
 # Live2D 模型:授权仅限本地使用、禁止二传,不入库
