@@ -3,7 +3,8 @@ import * as PIXI from 'pixi.js'
 import type { Live2DModel as Live2DModelInstance } from 'pixi-live2d-display/cubism4'
 
 // ---------- AI 悬浮球的 Live2D 小组件:渲染 Miku 模型,替代原星星图标 ----------
-// 模型文件在 public/live2d/miku/(含全部表情/动作文件);版权模型,仅本地使用,勿提交/分发。
+// 模型文件在 public/live2d/ 下按皮肤分目录(classic → miku/、sakura → miku-sakura/),
+// 含全部表情/动作文件;版权模型,仅本地使用,勿提交/分发。
 // 交互约定:点击/拖动都由外层 .ai-fab 按钮统一处理,App 通过 window 事件通知这里做反馈:
 //   miku:tap(detail.clientY 点击纵坐标,按位置分区反应) / miku:dragstart / miku:dragend /
 //   miku:express(AI 回复轻表情) / miku:celebrate(完成待办/打卡庆祝) / miku:thinking(on) /
@@ -12,14 +13,77 @@ import type { Live2DModel as Live2DModelInstance } from 'pixi-live2d-display/cub
 // 拖动身体轻摆,等 AI 回复时慢速晃,说话口型,闲置自娱彩蛋,夜晚(21–06 点)困困模式。
 // 初始化失败(缺 Core、无 WebGL、模型损坏)时回调 onFailed,由外层回退为星星图标。
 
-const MODEL_URL = '/live2d/miku/miku.model3.json'
 const CORE_URL = '/live2d/live2dcubismcore.min.js'
 
-// AI 回复/闲置/随机反应共用的轻表情
-const LIGHT_EXPRESSIONS = ['比心', '脸红', '圈圈']
+// ---------- 皮肤注册表 ----------
+// 两套模型同一骨架同一参数方案(QQ 人=Param131/136、水印关闭=Param137、脸红=130、
+// 圈圈=125、前倾=132),且 Param133 在两套上都是「掏出手中物」:经典=葱、樱花=花枝
+// (樱花目录里作者留下的 哭.exp3.json 写的就是 133=1,cdi3 标签「哭」有误导性,实测
+// 效果是举起花枝,并非哭泣表情)。差别在手势数量:经典有比心/唱歌/葱三选一
+// (Param133/134/135),樱花只剩花枝。换皮肤由父级换 key 重挂本组件完成,
+// skin prop 只在挂载时读一次(见 skinConfRef)
+export type MikuSkin = 'classic' | 'sakura'
+
+interface SkinConf {
+  modelUrl: string
+  /** 注册进 model settings 的表情:Name(运行时引用名) → 模型目录里的 exp3 文件 */
+  expressions: readonly { name: string; file: string }[]
+  /** 随机轻表情池(点击/AI 回复/闲置/庆祝) */
+  light: readonly string[]
+  /** 可叠加表情 → 专属参数(update 尾部每帧写 1,关闭补 0) */
+  emotes: Record<string, readonly string[]>
+  /** 舞蹈保留动作:pin 名(菜单勾选值)+ 舞蹈期间的表情(把手中的葱/花枝亮出来);
+   * 动作文件用各皮肤目录自带的 Scene1(动画只摆葱/花枝骨架,不亮出来就看不见) */
+  dance: { pin: string; expression: string } | null
+  /** 手部骨架保留动作(菜单/养成页动作组渲染用);talkMs 仅唱歌用 */
+  handActions: readonly { name: string; talkMs?: number }[]
+}
+
+export const MIKU_SKINS: Record<MikuSkin, SkinConf> = {
+  classic: {
+    modelUrl: '/live2d/miku/miku.model3.json',
+    expressions: [
+      { name: '比心', file: '比心.exp3.json' },
+      { name: '脸红', file: '脸红.exp3.json' },
+      { name: '圈圈', file: '圈圈.exp3.json' },
+      { name: '唱歌', file: '唱歌.exp3.json' },
+      { name: '葱', file: '葱.exp3.json' },
+      { name: 'QQ人', file: 'QQ人.exp3.json' },
+      { name: '前倾', file: '前倾.exp3.json' },
+    ],
+    light: ['比心', '脸红', '圈圈'],
+    emotes: { 脸红: ['Param130'], 圈圈: ['Param125'], 前倾: ['Param132'] },
+    dance: { pin: '拿葱舞', expression: '葱' },
+    handActions: [{ name: '比心' }, { name: '唱歌', talkMs: 3200 }],
+  },
+  sakura: {
+    modelUrl: '/live2d/miku-sakura/樱花miku.model3.json',
+    // 「花枝」即作者目录里的 哭.exp3.json(133=1):实测举起樱花枝,挂真名防误导
+    expressions: [
+      { name: '花枝', file: '哭.exp3.json' },
+      { name: '脸红', file: '脸红.exp3.json' },
+      { name: '圈圈', file: '圈圈.exp3.json' },
+      { name: 'QQ人', file: 'QQ人.exp3.json' },
+      { name: '前倾', file: '前倾.exp3.json' },
+    ],
+    light: ['脸红', '圈圈'],
+    emotes: { 脸红: ['Param130'], 圈圈: ['Param125'], 前倾: ['Param132'] },
+    dance: { pin: '花枝舞', expression: '花枝' },
+    handActions: [{ name: '花枝' }],
+  },
+}
+
+/** 跨皮肤表情代偿:目标皮肤没有该表情时换成最接近的可用表情(爱意→害羞、掏葱→举花枝),
+ * 返回 null = 没有代偿(如唱歌手势),调用方只保留口型等其余反应 */
+export function resolveExpression(skin: MikuSkin, name: string): string | null {
+  const conf = MIKU_SKINS[skin]
+  if (conf.expressions.some((e) => e.name === name)) return name
+  if (name === '比心') return '脸红'
+  if (name === '葱') return '花枝'
+  return null
+}
+
 const EXPRESSION_MS = 2800
-// 保留动作里的舞蹈标记(pinnedRef 存这个值 = 循环拿葱舞)
-const DANCE_PIN = '拿葱舞'
 
 // 分区触摸:点击纵坐标换算成舞台相对高度,头顶摸摸/脸颊戳戳/身体挠痒痒各有反应
 const ZONE_FACE = 0.38
@@ -84,14 +148,9 @@ export const MIKU_CHEER_EVENT = 'miku:cheer'
 export const MIKU_NOD_EVENT = 'miku:nod'
 /**
  * 可叠加表情开关(detail {name} 切换 / {clearA} 全清):脸红/圈圈/前倾各占独立参数,
- * 可同时生效;比心/唱歌/葱/拿葱舞共用手部骨架(exp3.json 里互相清零)保持三选一
+ * 可同时生效(两皮肤同集,见 MIKU_SKINS[*].emotes)
  */
 export const MIKU_EMOTE_EVENT = 'miku:emote'
-const EMOTE_PARAMS: Record<string, string[]> = {
-  脸红: ['Param130'],
-  圈圈: ['Param125'],
-  前倾: ['Param132'],
-}
 /** 眯眼害羞(detail {ms}):EyeL/R_Squint 保持一段时间 */
 export const MIKU_SQUINT_EVENT = 'miku:squint'
 
@@ -165,18 +224,18 @@ function patchCrossContextShaderCache(Live2DModelCtor: { prototype: any }) {
   }
 }
 
-// 拉取模型设置。model3.json 本身没有声明表情/动作,这里在内存里把模型自带的表情文件
-// 与拿葱动作(Scene1,即 VTS 动作按键)注册进去(不改动磁盘上的任何模型文件);
+// 拉取模型设置。model3.json 本身没有声明表情/动作,这里在内存里把当前皮肤的表情文件
+// 与拿葱/跳舞动作(Scene1,即 VTS 动作按键)注册进去(不改动磁盘上的任何模型文件);
 // 水印表情刻意不注册,水印参数在模型加载后直接按作者预留档位关闭。
-async function buildModelSettings(): Promise<Record<string, unknown>> {
-  const res = await fetch(MODEL_URL)
+async function buildModelSettings(skin: MikuSkin): Promise<Record<string, unknown>> {
+  const conf = MIKU_SKINS[skin]
+  const res = await fetch(conf.modelUrl)
   if (!res.ok) throw new Error(`模型设置加载失败: ${res.status}`)
   const json = (await res.json()) as Record<string, any>
   // settings 需要携带自身 url,用于解析相对路径的 moc/贴图/表情/动作引用
-  json.url = MODEL_URL
-  const names = ['比心', '脸红', '圈圈', '唱歌', '葱', 'QQ人', '前倾']
-  json.FileReferences.Expressions = names.map((name) => ({ Name: name, File: `${name}.exp3.json` }))
-  json.FileReferences.Motions = { Dance: [{ File: 'Scene1.motion3.json' }] }
+  json.url = conf.modelUrl
+  json.FileReferences.Expressions = conf.expressions.map((e) => ({ Name: e.name, File: e.file }))
+  if (conf.dance) json.FileReferences.Motions = { Dance: [{ File: 'Scene1.motion3.json' }] }
   return json
 }
 
@@ -194,6 +253,17 @@ interface Props {
   height?: number
   /** fab = 悬浮球内(page 变体仅影响类名,定位由外层容器负责) */
   variant?: 'fab' | 'page'
+  /**
+   * 皮肤(classic 原版 / sakura 樱花):只在挂载时读一次;切换皮肤由父级换 key
+   * 重挂本组件(与网格自愈同一机制),不做热更新
+   */
+  skin?: MikuSkin
+  /**
+   * 当前保留动作(App 的 mikuAction 单真源):重挂(换皮肤/网格自愈/配置自愈)后
+   * 据此在新模型上恢复,undefined = 不参与同步。不传的话,重挂后按钮还亮着而
+   * 新模型上没有任何动作,表现为「点了没反应」的假象
+   */
+  pinnedAction?: string | null
   /**
    * 全局 QQ 人形态开关(App 的 mikuQQ,单真源)。同页双舞台 + 右键菜单/养成页
    * 动作组共用这个状态:任何一处切换后,另一个舞台(哪怕正 display:none 隐藏)
@@ -234,6 +304,8 @@ function MikuStageInner(
     width = STAGE_W,
     height = STAGE_H,
     variant = 'fab',
+    skin = 'classic',
+    pinnedAction,
     qqOn,
     visible = true,
     onModelDead,
@@ -243,6 +315,27 @@ function MikuStageInner(
   // 外部 QQ 状态的渲染期镜像:init 完成时模型可能晚于状态变化才就绪,就绪对齐要读最新值
   const qqOnRef = useRef<boolean | undefined>(qqOn)
   qqOnRef.current = qqOn
+  // 皮肤配置镜像:仅挂载时读一次(换皮肤必然伴随父级换 key 重挂,本 ref 不热更新)
+  const skinConfRef = useRef(MIKU_SKINS[skin])
+  // 配置身份自愈:HMR/发版后模块常量换了新对象身份,而 Fast Refresh 会保留本实例
+  // 与已加载的旧模型(init effect 不重跑)——旧模型上注册的还是旧表情名,新 UI 派发
+  // 的新表情名(如「花枝」)在它上面查不到,全部静默失效,表现为「点了没反应」。
+  // 检测到配置对象换身份即触发父级换 key 重挂,换上新配置加载的模型(每次配置
+  // 变更只触发一次,重挂后 ref 由新模块重建,身份自然一致)
+  useEffect(() => {
+    if (skinConfRef.current !== MIKU_SKINS[skin]) {
+      skinConfRef.current = MIKU_SKINS[skin]
+      onModelDeadRef.current?.()
+    }
+  })
+  // 当前皮肤的随机轻表情(点击反应/AI 回复/闲置/庆祝共用)
+  const pickLight = () => {
+    const pool = skinConfRef.current.light
+    return pool[Math.floor(Math.random() * pool.length)]
+  }
+  // 当前皮肤下的可用表情:不存在时按代偿表换(见 resolveExpression);
+  // 仍无(如唱歌手势无代偿)则退回圈圈,保证调用方永远拿到可用的表情名
+  const skinExpr = (name: string): string => resolveExpression(skin, name) ?? '圈圈'
   const hostRef = useRef<HTMLDivElement>(null)
   const modelRef = useRef<Live2DModelInstance | null>(null)
   const readyRef = useRef(false)
@@ -286,7 +379,7 @@ function MikuStageInner(
   const squintWasRef = useRef(false)
   // 保留动作(右键菜单「动作」选的表情):本会话内一直保持;期间的点击反应/AI 回复
   // 表情/闲置彩蛋都是临时客串,结束后回到她。null = 无保留(临时表情结束即复原)。
-  // 值为 DANCE_PIN 时 = 循环拿葱舞。刷新页面回默认待机,不做跨刷新记忆
+  // 值为皮肤舞蹈的 pin 名时 = 循环舞蹈(见 MIKU_SKINS[*].dance)。刷新页面回默认待机,不做跨刷新记忆
   const pinnedRef = useRef<string | null>(null)
   // 临时表情/一次性动作的截止时刻:掏葱、比心等姿势会改变可见剪影(比如大葱
   // 伸向一侧),居中自检以「居中站姿」为测量前提,姿势期间介入会把姿势当偏移
@@ -531,13 +624,16 @@ function MikuStageInner(
     }, attempt === 0 ? 600 : 1000)
   }
 
-  // 临时表情结束后的复原:有保留动作则回到她(舞蹈保留回葱表情),否则完全复位
+  // 临时表情结束后的复原:有保留动作则回到她(舞蹈保留回舞蹈表情),否则完全复位
   const restoreExpressionSafe = () => {
     try {
       const model = modelRef.current
       const pinned = pinnedRef.current
+      const dance = skinConfRef.current.dance
       if (model && pinned) {
-        Promise.resolve(model.expression(pinned === DANCE_PIN ? '葱' : pinned)).catch(() => undefined)
+        Promise.resolve(
+          model.expression(dance && pinned === dance.pin ? dance.expression : pinned),
+        ).catch(() => undefined)
         return
       }
       model?.internalModel.motionManager.expressionManager?.resetExpression()
@@ -569,7 +665,7 @@ function MikuStageInner(
   const pinAction = (name: string) => {
     pinnedRef.current = name
     window.clearTimeout(expressionTimerRef.current)
-    if (name === DANCE_PIN) {
+    if (skinConfRef.current.dance?.pin === name) {
       kickDanceLoop()
       return
     }
@@ -577,13 +673,13 @@ function MikuStageInner(
     if (model && readyRef.current) Promise.resolve(model.expression(name)).catch(() => undefined)
   }
 
-  // 循环拿葱舞:跳完 DANCE_MS 后只要还保留着舞蹈就再起一轮
+  // 循环舞蹈:跳完 DANCE_MS 后只要还保留着舞蹈就再起一轮
   // (定时器独立于表情复原定时器,临时表情客串不会打断循环)
   const kickDanceLoop = () => {
     window.clearTimeout(danceLoopTimerRef.current)
     doDance()
     danceLoopTimerRef.current = window.setTimeout(() => {
-      if (pinnedRef.current === DANCE_PIN) kickDanceLoop()
+      if (pinnedRef.current === skinConfRef.current.dance?.pin) kickDanceLoop()
     }, DANCE_MS)
   }
 
@@ -610,12 +706,13 @@ function MikuStageInner(
     model.focus(x, y)
   }
 
-  // 闲置彩蛋之一:掏出大葱挥一段舞(模型自带动作),失败降级为普通表情
+  // 闲置彩蛋之一:跳一段舞(模型自带 Scene1 动作),失败降级为普通表情
   const doDance = () => {
     const model = modelRef.current
-    if (!model || !readyRef.current) return
+    const dance = skinConfRef.current.dance
+    if (!model || !readyRef.current || !dance) return
     const fallback = () => showExpression('圈圈', 3000)
-    Promise.resolve(model.expression('葱')).catch(fallback)
+    Promise.resolve(model.expression(dance.expression)).catch(fallback)
     Promise.resolve(model.motion('Dance', 0))
       .then((ok) => {
         if (!ok) fallback()
@@ -630,12 +727,12 @@ function MikuStageInner(
   const doIdleAct = () => {
     const roll = Math.random()
     if (roll < 0.3) {
-      showExpression(LIGHT_EXPRESSIONS[Math.floor(Math.random() * LIGHT_EXPRESSIONS.length)], 3200)
+      showExpression(pickLight(), 3200)
       idleUntilRef.current = Date.now() + 3200
     } else if (roll < 0.55) {
       glanceAway()
       idleUntilRef.current = Date.now() + 3000
-    } else if (roll < 0.78) {
+    } else if (skinConfRef.current.dance && roll < 0.78) {
       doDance()
     } else {
       // 碎碎念:外层按当前数据冒一句话气泡
@@ -686,7 +783,7 @@ function MikuStageInner(
         Live2DModelCtor.registerTicker(PIXI.Ticker)
         patchCrossContextShaderCache(Live2DModelCtor)
         if (disposed) return
-        const settings = await buildModelSettings()
+        const settings = await buildModelSettings(skin)
         if (disposed) return
         app = new PIXI.Application({
           width,
@@ -937,9 +1034,9 @@ function MikuStageInner(
             core.setParameterValueById('EyeR_Squint', 0)
           }
           // 可叠加表情层:每帧写激活表情的专属参数(只在尾部写,压过表情管理器
-          // 的同参写入;关闭时不写,参数由关闭瞬间的补 0 归零)
+          // 的同参写入;关闭时不写,参数由关闭瞬间的补 0 归零)。可用集按皮肤
           for (const name of emoteOnRef.current) {
-            for (const id of EMOTE_PARAMS[name] ?? []) {
+            for (const id of skinConfRef.current.emotes[name] ?? []) {
               core.setParameterValueById(id, 1)
             }
           }
@@ -1034,6 +1131,15 @@ function MikuStageInner(
         }
         app.ticker.add(onTick)
         readyRef.current = true
+        // 就绪补应用保留动作:点击若落在载入窗口期(HMR 重挂/换皮肤/进页重载后的
+        // 1-2s 召唤提示),事件到达时 readyRef 尚为 false,表情/舞蹈会被静默丢弃
+        // 且窗口事件不会重放。保留动作是用户显式选择(按钮/菜单已点亮),就绪即补上
+        // ——与下方 qqOn 就绪对齐同一思路
+        const pinnedNow = pinnedRef.current
+        if (pinnedNow) {
+          if (skinConfRef.current.dance?.pin === pinnedNow) kickDanceLoop()
+          else Promise.resolve(model.expression(pinnedNow)).catch(() => undefined)
+        }
         // 加载期间外部 QQ 状态可能已变化(如养成页先变形、本实例模型后就绪):
         // 就绪即对齐,避免「菜单勾着、立绘却是普通形态」
         if (qqOnRef.current !== undefined && (qqOnRef.current ? 1 : 0) !== qqTargetRef.current) {
@@ -1130,6 +1236,18 @@ function MikuStageInner(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qqOn])
 
+  // 保留动作 → 本舞台跟随(pinnedAction 单真源在 App):变化时对齐;重挂(换皮肤/
+  // 配置自愈/网格自愈)后新实例据此在新模型上恢复,否则按钮亮着而模型没动作。
+  // 未就绪时也先把目标写进 pinnedRef(init 就绪补应用逻辑据此补上,见 init effect);
+  // 本舞台自身经事件 morph 后回写过状态时,这里自然命中「已一致」零操作
+  useEffect(() => {
+    if (pinnedAction === undefined) return
+    if ((pinnedRef.current ?? null) === pinnedAction) return
+    if (pinnedAction === null) unpinAction()
+    else pinAction(pinnedAction)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pinnedAction])
+
   // 夜晚困困模式开关:按本地小时每分钟轮询(21:00–06:00),调试可用 __mikuDebug.setNight 覆盖
   useEffect(() => {
     nightRef.current = isNightHour()
@@ -1175,13 +1293,13 @@ function MikuStageInner(
       }
       if (comboCountRef.current >= COMBO_N) {
         comboCountRef.current = 0
-        showExpression('比心', 3000)
+        showExpression(skinExpr('比心'), 3000)
         bounceAtRef.current = now
         return
       }
       // QQ 形态太小分不出部位(或事件没带坐标):随机轻反应
       if (qqTargetRef.current === 1 || typeof clientY !== 'number') {
-        showExpression(LIGHT_EXPRESSIONS[Math.floor(Math.random() * LIGHT_EXPRESSIONS.length)])
+        showExpression(pickLight())
         bounceAtRef.current = now
         return
       }
@@ -1229,10 +1347,12 @@ function MikuStageInner(
     }
     const onExpress = () => {
       if (!stageVisible()) return
-      showExpression(LIGHT_EXPRESSIONS[Math.floor(Math.random() * LIGHT_EXPRESSIONS.length)])
+      showExpression(pickLight())
     }
     // 右键菜单「动作」:pin = 保留动作(一直保持);不带 pin 的是一次性表演;
-    // clear = 取消保留回到默认;dance = 拿葱舞(一次性)
+    // clear = 取消保留回到默认;dance = 舞蹈(一次性)。
+    // 口型独立于表情处理:某皮肤没有唱歌手势时(resolveExpression 为 null),
+    // 外层只派 talkMs,口型照常开口
     const onPlay = (e: Event) => {
       if (!stageVisible()) return
       const detail = (e as CustomEvent).detail as
@@ -1246,10 +1366,10 @@ function MikuStageInner(
         unpinAction()
         return
       }
+      if (detail?.talkMs) talkUntilRef.current = performance.now() + detail.talkMs
       if (detail?.expression) {
         if (detail.pin) pinAction(detail.expression)
         else showExpression(detail.expression, 3200)
-        if (detail.talkMs) talkUntilRef.current = performance.now() + detail.talkMs
       }
     }
     // 双击切换 QQ 人形态:持续参数档,进出都带弹跳;变身后不受表情复位影响。
@@ -1274,11 +1394,12 @@ function MikuStageInner(
       talkUntilRef.current = performance.now() + Math.min(Math.max(ms ?? 2200, 1200), 5000)
       if (readyRef.current) bounceAtRef.current = performance.now()
     }
-    // 可叠加表情开关:激活即每帧写 1,关闭瞬间补 0(参数跨帧持久,不补会停在 1)
+    // 可叠加表情开关:激活即每帧写 1,关闭瞬间补 0(参数跨帧持久,不补会停在 1)。
+    // 可用集按皮肤(skinConfRef.emotes),越权名字直接忽略
     const writeEmoteParams = (name: string, value: number) => {
       try {
         const core = modelRef.current?.internalModel.coreModel as ParamWriter | null
-        for (const id of EMOTE_PARAMS[name] ?? []) core?.setParameterValueById(id, value)
+        for (const id of skinConfRef.current.emotes[name] ?? []) core?.setParameterValueById(id, value)
       } catch {
         // 模型可能在写入前被销毁,忽略
       }
@@ -1292,7 +1413,7 @@ function MikuStageInner(
         return
       }
       const name = detail?.name
-      if (!name || !EMOTE_PARAMS[name]) return
+      if (!name || !skinConfRef.current.emotes[name]) return
       if (emoteOnRef.current.has(name)) {
         emoteOnRef.current.delete(name)
         writeEmoteParams(name, 0)
@@ -1306,13 +1427,13 @@ function MikuStageInner(
       const now = performance.now()
       if (now - celebrateAtRef.current < CELEBRATE_COOLDOWN_MS) return
       celebrateAtRef.current = now
-      showExpression(Math.random() < 0.5 ? '比心' : '圈圈', 3200)
+      showExpression(Math.random() < 0.5 ? skinExpr('比心') : '圈圈', 3200)
       bounceAtRef.current = now
     }
     // 无冷却轻庆祝:小游戏连击反馈(celebrate 的 1.5s 冷却会吞掉密集反应)
     const onCheer = () => {
       if (!stageVisible() || !readyRef.current) return
-      showExpression(LIGHT_EXPRESSIONS[Math.floor(Math.random() * LIGHT_EXPRESSIONS.length)], 1600)
+      showExpression(pickLight(), 1600)
       bounceAtRef.current = performance.now()
     }
     const onNod = () => {

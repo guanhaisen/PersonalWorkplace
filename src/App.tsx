@@ -25,6 +25,8 @@ import MikuStage, {
   MIKU_PLAY_EVENT,
   MIKU_QQ_EVENT,
   MIKU_TAP_EVENT,
+  MIKU_SKINS,
+  type MikuSkin,
 } from './components/MikuStage'
 import MikuRaisePanel from './components/MikuRaisePanel'
 import MikuMenu, { type MikuMenuItem } from './components/MikuMenu'
@@ -526,12 +528,25 @@ export default function App() {
   const [fabModelEpoch, setFabModelEpoch] = useState(0)
   // QQ 人形态:按钮盒与拖动钳制范围随之缩小;仅本会话内保持,刷新回默认原形
   const [mikuQQ, setMikuQQ] = useState(false)
+  // 皮肤(classic 原版 / sakura 樱花):持久化;切换即重挂两处舞台换模型
+  const [mikuSkin, setMikuSkin] = useState<MikuSkin>(() =>
+    localStorage.getItem('miku.skin') === 'sakura' ? 'sakura' : 'classic',
+  )
+  const switchSkin = (s: MikuSkin) => {
+    if (s === mikuSkin) return
+    setMikuSkin(s)
+    localStorage.setItem('miku.skin', s)
+    // 新皮肤的表情集不同:动作/表情状态直接清掉,避免勾选指向不存在的表情;
+    // 舞台经 key 重挂,新模型就绪即按 qqOn 对齐形态
+    setEmoteOn({})
+    setMikuAction(null)
+  }
   // 保留动作(右键菜单「动作」选的表情/舞蹈):本会话内一直保持、不自动复原;
   // 刷新页面回默认待机(按需求不做跨刷新记忆)
   const [mikuAction, setMikuAction] = useState<string | null>(null)
-  // 可叠加表情(脸红/圈圈/前倾,参数互不冲突可同时生效);比心/唱歌/葱/拿葱舞
-  // 共用手部骨架是三选一,仍走 mikuAction 单选。三处 UI(右键菜单/养成页动作组)
-  // 共享同一份状态
+  // 可叠加表情(脸红/圈圈/前倾,两皮肤同集,参数互不冲突可同时生效)。
+  // 手部动作与舞蹈走 mikuAction 单选:经典比心/唱歌/拿葱舞,樱花花枝/花枝舞。
+  // 三处 UI(右键菜单/养成页动作组)共享同一份状态
   const [emoteOn, setEmoteOn] = useState<Record<string, boolean>>({})
   // 右键菜单与 Miku 偏好(隐藏 / 缩放 / 眼神跟随 / 闲置彩蛋),均持久化
   const [mikuMenu, setMikuMenu] = useState<{ x: number; y: number } | null>(null)
@@ -1347,6 +1362,9 @@ export default function App() {
     window.dispatchEvent(new CustomEvent(MIKU_EMOTE_EVENT, { detail: { name } }))
     setEmoteOn((prev) => ({ ...prev, [name]: !prev[name] }))
   }
+  // 动作组按皮肤渲染:可叠加表情来自 skinConf.emotes,手部动作来自 handActions,
+  // 舞蹈来自 dance(经典比心/唱歌/拿葱舞,樱花花枝/花枝舞)
+  const skinConf = MIKU_SKINS[mikuSkin]
   const mikuMenuItems: MikuMenuItem[] = [
     { key: 'hide', label: '隐藏她', hint: '⌘K 恢复', onClick: hideMiku },
     { key: 'sep1', label: '', divider: true },
@@ -1360,14 +1378,43 @@ export default function App() {
           checked: !mikuAction && !Object.values(emoteOn).some(Boolean),
           onClick: clearEmotes,
         },
-        { key: 'blush', label: '脸红', checked: !!emoteOn['脸红'], onClick: () => toggleEmote('脸红') },
-        { key: 'circle', label: '圈圈', checked: !!emoteOn['圈圈'], onClick: () => toggleEmote('圈圈') },
-        { key: 'lean', label: '前倾', checked: !!emoteOn['前倾'], onClick: () => toggleEmote('前倾') },
-        { key: 'heart', label: '比心', checked: mikuAction === '比心', onClick: () => playMiku('比心') },
-        { key: 'sing', label: '唱歌', checked: mikuAction === '唱歌', onClick: () => playMiku('唱歌', 3200) },
-        { key: 'dance', label: '拿葱舞', checked: mikuAction === '拿葱舞', onClick: () => playMiku('拿葱舞') },
+        ...Object.keys(skinConf.emotes).map((name) => ({
+          key: `emote-${name}`,
+          label: name,
+          checked: !!emoteOn[name],
+          onClick: () => toggleEmote(name),
+        })),
+        ...skinConf.handActions.map((a) => ({
+          key: `hand-${a.name}`,
+          label: a.name,
+          checked: mikuAction === a.name,
+          onClick: () => playMiku(a.name, a.talkMs),
+        })),
+        ...(skinConf.dance
+          ? [
+              {
+                key: 'dance',
+                label: skinConf.dance.pin,
+                checked: mikuAction === skinConf.dance.pin,
+                onClick: () => playMiku(skinConf.dance!.pin),
+              },
+            ]
+          : []),
         { key: 'qq', label: 'QQ 人形态', checked: mikuQQ, onClick: () => window.dispatchEvent(new CustomEvent(MIKU_QQ_EVENT)) },
       ],
+    },
+    {
+      key: 'skin',
+      label: '皮肤',
+      children: ([
+        ['classic', '经典'],
+        ['sakura', '樱花'],
+      ] as const).map(([id, label]) => ({
+        key: `skin-${id}`,
+        label,
+        checked: mikuSkin === id,
+        onClick: () => switchSkin(id),
+      })),
     },
     {
       key: 'rem',
@@ -1784,11 +1831,13 @@ export default function App() {
               pet={pet}
               onPet={onPet}
               mikuAction={mikuAction}
+              mikuSkin={mikuSkin}
               mikuQQ={mikuQQ}
               onQQChange={setMikuQQ}
               playMiku={playMiku}
               emoteOn={emoteOn}
               toggleEmote={toggleEmote}
+              switchSkin={switchSkin}
               clearEmotes={clearEmotes}
               visible={view === 'raise'}
             />
@@ -1871,7 +1920,9 @@ export default function App() {
             {/* Miku Live2D 舞台;养成页时本按钮整体卸载,回总览后随组件重建 */}
             {!mikuFailed && (
               <MikuStage
-                key={fabModelEpoch}
+                key={`${mikuSkin}-${fabModelEpoch}`}
+                skin={mikuSkin}
+                pinnedAction={mikuAction}
                 onReady={() => {
                   setMikuReady(true)
                   // 首次就绪的一次性手势提示(触屏上没有 title 可悬停):

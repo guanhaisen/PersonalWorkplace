@@ -41,6 +41,9 @@ import MikuStage, {
   MIKU_SQUINT_EVENT,
   MIKU_SPEAK_EVENT,
   MIKU_TAP_EVENT,
+  MIKU_SKINS,
+  resolveExpression,
+  type MikuSkin,
   type MikuStageApi,
 } from './MikuStage'
 
@@ -52,15 +55,19 @@ interface Props {
   onPet: (next: MikuPet) => void
   /** 当前保留动作(与右键菜单同源):null = 默认待机;手部三选一组 */
   mikuAction: string | null
+  /** 当前皮肤(与右键菜单同源):决定可用表情集与动作按钮组 */
+  mikuSkin: MikuSkin
   /** QQ 人形态是否开启(与右键菜单同源) */
   mikuQQ: boolean
   /** 本页大舞台切换 QQ 形态后回写全局状态(悬浮球/右键菜单跟随) */
   onQQChange?: (on: boolean) => void
   /** 选择/取消保留动作(App 统一派发,菜单与本栏共享) */
   playMiku: (expression: string | null, talkMs?: number) => void
-  /** 可叠加表情(脸红/圈圈/前倾,参数独立可同时生效) */
+  /** 可叠加表情(可用集按皮肤,参数独立可同时生效) */
   emoteOn: Record<string, boolean>
   toggleEmote: (name: string) => void
+  /** 切换皮肤(与右键菜单「皮肤」同源):换模型会重挂舞台,1-2s 召唤提示 */
+  switchSkin: (s: MikuSkin) => void
   /** 恢复默认:清空可叠加组 + 解除手部三选一 */
   clearEmotes: () => void
   /** 本页是否可见(切页即 display:none):透传给大舞台做渲染循环的确定性启停 */
@@ -115,7 +122,7 @@ interface FlyingFood {
   dy: number
 }
 
-export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, onQQChange, playMiku, emoteOn, toggleEmote, clearEmotes, visible = true }: Props) {
+export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuSkin, mikuQQ, onQQChange, playMiku, emoteOn, toggleEmote, switchSkin, clearEmotes, visible = true }: Props) {
   // 画布尺寸:高度按视口推算,宽度在挂载后量整个舞台容器(此前画布只有 ~462px
   // 的盒子宽,和 Miku 展开的头发差不多宽,左右拖动几步就会被画布边缘腰斩)。
   // 首帧先渲染召唤提示,量完宽再挂载舞台,不会出现「先按盒子宽建画布再重载」
@@ -400,14 +407,19 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
       const cur = petNow(petRef.current)
       if (cur.fullness < 25) {
         say(pick(HUNGER_LINES), { prio: 1 })
-        window.dispatchEvent(new CustomEvent(MIKU_PLAY_EVENT, { detail: { expression: '葱' } }))
+        // 饿肚子撒娇:举起自己的宝贝讨食(经典掏葱 / 樱花举花枝,见 resolveExpression)
+        window.dispatchEvent(
+          new CustomEvent(MIKU_PLAY_EVENT, {
+            detail: { expression: resolveExpression(mikuSkin, '葱') ?? '圈圈' },
+          }),
+        )
       } else if (cur.mood < 25) {
         say(pick(BORED_LINES), { prio: 1 })
         window.dispatchEvent(new CustomEvent(MIKU_PLAY_EVENT, { detail: { expression: '圈圈' } }))
       }
     }, 45_000)
     return () => window.clearInterval(t)
-  }, [say])
+  }, [say, mikuSkin])
 
   // 「回来啦」:离开养成页超过 30 分钟再回来时打个招呼。纯陪伴台词不给奖励
   // (签到/见面礼仍只在挂载时结算一次),优先级 1:忙时不出,不抢正式播报
@@ -552,10 +564,12 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
     }, 620)
   }
 
+  const skinConf = MIKU_SKINS[mikuSkin]
   const feedConf = {
     leek: {
       emoji: '🥬',
-      expression: '葱',
+      // 掏葱/花枝:两皮肤各自举起手中物(见 resolveExpression)
+      expression: resolveExpression(mikuSkin, '葱') ?? '圈圈',
       delta: { mood: 4, fullness: 18, bond: 2 },
       lines: ['是葱!!我最喜欢葱了!!', '葱葱葱——(眼睛亮了)', '咔嚓咔嚓…好好吃!'],
     },
@@ -567,11 +581,12 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
     },
     pudding: {
       emoji: '🍮',
-      expression: '比心',
+      // 比心手势只有经典皮肤有,樱花皮肤代偿为害羞脸红
+      expression: resolveExpression(mikuSkin, '比心') ?? '圈圈',
       delta: { mood: 8, fullness: 10, bond: 3 },
       lines: ['布丁!!你的 favorite!', '晃晃悠悠的,舍不得吃掉啦', '咕噜咕噜~幸福指数爆棚!'],
     },
-  } as const
+  }
 
   const feed = (kind: keyof typeof feedConf) => (e?: React.MouseEvent<HTMLButtonElement>) => {
     const key = `feed-${kind}`
@@ -626,9 +641,16 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
       checkAch(next)
     })
 
+  // 唱歌:经典版有唱歌手势;樱花版没有代偿表情(resolveExpression 为 null),
+  // 只派口型时长,MikuStage 照常开口唱
+  const singDetail = (): { expression?: string; talkMs: number } => {
+    const ex = resolveExpression(mikuSkin, '唱歌')
+    return ex ? { expression: ex, talkMs: 3200 } : { talkMs: 3200 }
+  }
+
   const doSing = () =>
     act('sing', 30_000, () => {
-      window.dispatchEvent(new CustomEvent(MIKU_PLAY_EVENT, { detail: { expression: '唱歌', talkMs: 3200 } }))
+      window.dispatchEvent(new CustomEvent(MIKU_PLAY_EVENT, { detail: singDetail() }))
       const { up, next } = settle({ mood: 8, bond: 2 }, 'sing')
       if (!up) say(pick(['1、2、3、哒——!', '听完要给我打分哦~', '这首是新练的,好听吗?']))
       checkAch(next)
@@ -637,7 +659,11 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
   const doHighfive = () =>
     act('highfive', 10_000, () => {
       window.dispatchEvent(new CustomEvent(MIKU_CHEER_EVENT))
-      window.dispatchEvent(new CustomEvent(MIKU_PLAY_EVENT, { detail: { expression: '比心' } }))
+      window.dispatchEvent(
+        new CustomEvent(MIKU_PLAY_EVENT, {
+          detail: { expression: resolveExpression(mikuSkin, '比心') ?? '圈圈' },
+        }),
+      )
       const { up, next } = settle({ mood: 2, bond: 2 })
       if (!up) say(pick(['啪!击掌!', '耶~默契满分!', '手好疼…骗你的,超开心!']))
       checkAch(next)
@@ -646,7 +672,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
   const doRequest = () =>
     act('request', 30_000, () => {
       const song = pick(SONGS)
-      window.dispatchEvent(new CustomEvent(MIKU_PLAY_EVENT, { detail: { expression: '唱歌', talkMs: 3200 } }))
+      window.dispatchEvent(new CustomEvent(MIKU_PLAY_EVENT, { detail: singDetail() }))
       const { up, next } = settle({ mood: 5, bond: 3 }, 'sing')
       if (!up) say(`好!这首${song},送给你~`)
       checkAch(next)
@@ -859,7 +885,9 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
                 重进本页重载模型约 1-2 秒,期间显示召唤提示 */}
             {size && visible && (
               <MikuStage
-                key={stageEpoch}
+                key={`${stageEpoch}:${mikuSkin}`}
+                skin={mikuSkin}
+                pinnedAction={mikuAction}
                 ref={stageApiRef}
                 variant="page"
                 width={size.w}
@@ -1014,8 +1042,10 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
             >
               默认
             </button>
-            {/* 脸红/圈圈/前倾参数互不冲突,可叠加;比心/唱歌/拿葱舞共用手部骨架,三选一 */}
-            {(['脸红', '圈圈', '前倾'] as const).map((name) => (
+            {/* 可叠加表情(脸红/圈圈/前倾,两皮肤同集,参数互不冲突可叠加);
+                手部动作:经典比心/唱歌、樱花花枝;舞蹈两皮肤都有(拿葱舞/花枝舞,
+                动作文件各皮肤目录各自自带,舞蹈表情负责把手中的葱/花枝亮出来) */}
+            {Object.keys(skinConf.emotes).map((name) => (
               <button
                 key={name}
                 className={`raise-emote${emoteOn[name] ? ' on' : ''}`}
@@ -1025,13 +1055,10 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
                 {name}
               </button>
             ))}
-            {(
-              [
-                ['比心', undefined],
-                ['唱歌', 3200],
-                ['拿葱舞', undefined],
-              ] as const
-            ).map(([name, talkMs]) => (
+            {[
+              ...skinConf.handActions.map((a) => [a.name, a.talkMs] as const),
+              ...(skinConf.dance ? ([[skinConf.dance.pin, undefined]] as const) : []),
+            ].map(([name, talkMs]) => (
               <button
                 key={name}
                 className={`raise-emote${mikuAction === name ? ' on' : ''}`}
@@ -1047,6 +1074,23 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuQQ, o
             >
               QQ人
             </button>
+            {/* 皮肤:当前项亮起,点另一项换模型(与右键菜单「皮肤」同源);
+                切换会重挂舞台,召唤提示短暂出现属正常 */}
+            {(
+              [
+                ['classic', '经典'],
+                ['sakura', '樱花'],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={`skin-${id}`}
+                className={`raise-emote${mikuSkin === id ? ' on' : ''}`}
+                onClick={() => switchSkin(id)}
+                title={`换到「${label}」皮肤(与右键菜单「皮肤」同源)`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
           </div>
           <button className="raise-ach-strip" onClick={() => setAchOpen(true)} title="成就任务券:点开查看全部">
