@@ -69,8 +69,11 @@ const hhmm = (iso: string): string => {
 
 /** 无 AI 时的确定性日报:标题 + 每条随手记一节(幂等,重跑不重复) */
 export function buildFallbackDaily(date: string, entries: NoteEntry[]): string {
-  const sections = entries.map((e) => `## ${hhmm(e.ts)} 随手记录\n\n- ${e.content.trim()}`)
-  return [`# ${date} 日报`, '', ...sections].join('\n\n')
+  const parts = [`# ${date} 日报`]
+  for (const e of entries) {
+    parts.push(`## ${hhmm(e.ts)} 随手记录`, `- ${e.content.trim()}`)
+  }
+  return parts.join('\n\n')
 }
 
 /** 周报来源:一周内每天一节日报;有日报用日报,没有但当天有随手记就用兜底版 */
@@ -175,6 +178,16 @@ export function useNotesOrg(data: AppData | null, update: UpdateFn): NotesOrg {
   // 同一天 / 周报生成的串行链:前一次 AI 写回后,后一次才能读到最新报告
   const dayChains = useRef<Map<string, Promise<void>>>(new Map())
   const weekChain = useRef<Promise<void>>(Promise.resolve())
+  // 编排器在 App 层持有,跨账号存活:数据从无到有(登录/换号)时清空上个会话期的状态
+  const hadDataRef = useRef(false)
+  if (!data) {
+    hadDataRef.current = false
+  } else if (!hadDataRef.current) {
+    hadDataRef.current = true
+    attemptedWeeks.current.clear()
+    dayChains.current.clear()
+    weekChain.current = Promise.resolve()
+  }
 
   const upsertReport = useCallback(
     (r: GenReport) => {

@@ -103,10 +103,13 @@ export default function CommandPalette({ open, onClose, commands }: Props) {
             <kbd>↵</kbd> 执行
           </span>
           <span>
-            <kbd>1-6</kbd> 切换视图
+            <kbd>1-8</kbd> 切换视图
           </span>
           <span>
             <kbd>N</kbd> 新课程
+          </span>
+          <span>
+            <kbd>M</kbd> 随手记
           </span>
         </div>
       </div>

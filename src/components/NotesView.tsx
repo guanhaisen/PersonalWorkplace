@@ -1,15 +1,14 @@
 // 随手记视图:随手输入 → AI 实时整理进当日日报 → 周报由一周日报生成。
-// 整理编排(队列/兜底/补齐)在 notesOrg.ts 的 useNotesOrg,本组件只管交互与展示。
+// 整理编排器(org)由 App 统一持有(与总览随手记卡共享同一条队列),本组件管交互与展示。
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AppData, NoteEntry } from '../types'
-import type { UpdateFn } from '../App'
 import { todayStr } from '../api'
-import { isoWeekKey, weekKeyToDays, weekdayCn, useNotesOrg } from '../notesOrg'
+import { isoWeekKey, weekKeyToDays, weekdayCn, type NotesOrg } from '../notesOrg'
 import MiniMarkdown from './MiniMarkdown'
 
 interface Props {
   data: AppData
-  update: UpdateFn
+  org: NotesOrg
 }
 
 const pad2 = (n: number) => String(n).padStart(2, '0')
@@ -27,8 +26,7 @@ const short = (date: string) => date.slice(5, 10).replace('-', '/')
 /** Date → 本地 YYYY-MM-DD(与 todayStr 同口径) */
 const dstr = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
 
-export default function NotesView({ data, update }: Props) {
-  const org = useNotesOrg(data, update)
+export default function NotesView({ data, org }: Props) {
   const [draft, setDraft] = useState('')
   const [tab, setTab] = useState<'daily' | 'weekly'>('daily')
   // 日报查看偏移:0 = 今天,负数往前(不允许未来)

@@ -7,9 +7,10 @@ import TodoPanel from './components/TodoPanel'
 import CalendarPanel from './components/CalendarPanel'
 import SchedulePanel from './components/SchedulePanel'
 import HabitsPanel from './components/HabitsPanel'
-import ShortcutsPanel from './components/ShortcutsPanel'
 import AiPanel from './components/AiPanel'
 import ReportPanel from './components/ReportPanel'
+import QuickNoteCard from './components/QuickNoteCard'
+import { useNotesOrg } from './notesOrg'
 import LinksBar from './components/LinksBar'
 import WebSearchBar from './components/WebSearchBar'
 import StartPageModal from './components/StartPageModal'
@@ -27,7 +28,7 @@ import MikuStage, {
 } from './components/MikuStage'
 import MikuRaisePanel from './components/MikuRaisePanel'
 import MikuMenu, { type MikuMenuItem } from './components/MikuMenu'
-import { BrandMark, IconAi, IconCalendar, IconGitHub, IconGrip, IconHabit, IconHeart, IconKeys, IconNotes, IconOverview, IconReport, IconSchedule, IconTodo } from './components/icons'
+import { BrandMark, IconAi, IconCalendar, IconGitHub, IconGrip, IconHabit, IconHeart, IconNotes, IconOverview, IconReport, IconSchedule, IconTodo } from './components/icons'
 import NotesView from './components/NotesView'
 import CommandPalette, { type Command } from './components/CommandPalette'
 
@@ -42,15 +43,15 @@ export type ViewKey = 'overview' | 'todos' | 'schedule' | 'habits' | 'notes' | '
 
 // ---------- 总览布局:两行卡槽,拖拽互换 ----------
 
-type PanelId = 'todo' | 'schedule' | 'cal' | 'hab' | 'keys' | 'ai' | 'report' | 'notes'
+type PanelId = 'todo' | 'schedule' | 'cal' | 'hab' | 'quicknote' | 'ai' | 'report' | 'notes'
 type Rows = PanelId[][]
 
 // 总览可放置的 5 张卡:课表卡固定占两列,其余单列;ai / report / notes 面板常驻挂载但不进总览槽位
-const SLOT_IDS: PanelId[] = ['todo', 'schedule', 'cal', 'hab', 'keys']
+const SLOT_IDS: PanelId[] = ['todo', 'schedule', 'cal', 'hab', 'quicknote']
 const PANEL_IDS: PanelId[] = [...SLOT_IDS, 'ai', 'report', 'notes']
 const LAYOUT_KEY = 'overview.layout.v4'
 
-const DEFAULT_SLOTS: PanelId[] = ['todo', 'hab', 'cal', 'schedule', 'keys']
+const DEFAULT_SLOTS: PanelId[] = ['todo', 'hab', 'cal', 'schedule', 'quicknote']
 
 // 课表卡的合法槽位为 0/1(上行宽位)或 3/4(下行宽位);落到行边界 2 时与后一位交换
 function normalizeSlots(arr: PanelId[]): PanelId[] {
@@ -100,10 +101,10 @@ const CAPSULE_META: Record<PanelId, { label: string; icon: JSX.Element }> = {
   schedule: { label: '课程表', icon: <IconSchedule /> },
   cal: { label: '日历', icon: <IconCalendar /> },
   hab: { label: '习惯打卡', icon: <IconHabit /> },
-  keys: { label: '快捷键', icon: <IconKeys /> },
   ai: { label: 'Miku', icon: <IconAi /> },
   report: { label: '周报', icon: <IconReport /> },
   notes: { label: '随手记', icon: <IconNotes /> },
+  quicknote: { label: '随手记', icon: <IconNotes /> },
 }
 
 // 导航顺序可自由调整(拖拽),数字快捷键跟随位置
@@ -987,6 +988,9 @@ export default function App() {
     [flush],
   )
 
+  // 随手记整理编排器:App 层统一持有,随手记页与总览随手记卡共享同一条整理队列
+  const notesOrg = useNotesOrg(data, update)
+
   // 有失败队列时:窗口重新聚焦 / 网络恢复 → 立即重试
   useEffect(() => {
     const retryNow = () => {
@@ -1481,10 +1485,10 @@ export default function App() {
             schedule: <SchedulePanel courses={data.courses} update={update} />,
             cal: <CalendarPanel habits={data.habits} />,
             hab: <HabitsPanel habits={data.habits} update={update} />,
-            keys: <ShortcutsPanel onOpenPalette={() => setPaletteOpen(true)} />,
+            quicknote: <QuickNoteCard data={data} org={notesOrg} />,
             ai: <AiPanel data={data} update={update} onNavigate={setView} />,
             report: <ReportPanel data={data} />,
-            notes: <NotesView data={data} update={update} />,
+            notes: <NotesView data={data} org={notesOrg} />,
           }
           // 各视图的行结构;总览行结构随课表卡位置自适应,其余面板保持挂载(隐藏)
           const w = slots.indexOf('schedule')
