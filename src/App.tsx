@@ -131,6 +131,10 @@ function loadNavOrder(): ViewKey[] {
   return [...DEFAULT_NAV]
 }
 
+// 触屏设备不走 HTML5 拖拽(长按行为怪异且不可靠),改用长按指针拖动;鼠标设备保留原生拖拽
+const NAV_HTML_DRAG =
+  typeof window !== 'undefined' && window.matchMedia('(hover: hover) and (pointer: fine)').matches
+
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
 const WEEKDAYS_EN = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT']
 const GITHUB_REPO = 'https://github.com/guanhaisen/PersonalWorkplace'
@@ -177,7 +181,7 @@ export default function App() {
   // 拖动激活后拦截触摸滚动(长按前不拦,保证列表可正常滑动)
   useEffect(() => {
     const block = (e: TouchEvent) => {
-      if (capDrag.current?.active) e.preventDefault()
+      if (capDrag.current?.active || navPointerDrag.current?.active) e.preventDefault()
     }
     document.addEventListener('touchmove', block, { passive: false })
     return () => document.removeEventListener('touchmove', block)
@@ -286,6 +290,153 @@ export default function App() {
     cells.forEach((c) => {
       c.style.removeProperty('transform')
       c.classList.remove('cap-dragging')
+    })
+  }
+
+  // ---------- 底部导航长按拖动排序(触屏):与总览胶囊同一套交互 ----------
+  // 触屏上 HTML5 拖拽长按行为怪异:长按约 380ms 进入指针拖动,横向(≤640 底栏)
+  // 或纵向(平板侧栏)按测量到的主轴位移让位,松手一次提交;未满阈值是普通点击
+  // 切视图。鼠标设备仍走原生 HTML5 拖拽(见 NAV_HTML_DRAG)。
+  const navPointerDrag = useRef<{
+    key: ViewKey
+    fromIndex: number
+    targetIndex: number
+    startX: number
+    startY: number
+    active: boolean
+    press: HTMLButtonElement
+    pointerId: number
+    items: HTMLElement[] | null
+    rects: DOMRect[] | null
+    step: number
+    axis: 'x' | 'y'
+  } | null>(null)
+  const navPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const navSuppressClick = useRef(false)
+
+  const measureNavItems = (d: NonNullable<typeof navPointerDrag.current>) => {
+    const items = Array.from(document.querySelectorAll<HTMLElement>('.nav .nav-item'))
+    const rects = items.map((c) => c.getBoundingClientRect())
+    d.items = items
+    d.rects = rects
+    d.axis =
+      rects.length > 1 && Math.abs(rects[1].left - rects[0].left) >= Math.abs(rects[1].top - rects[0].top)
+        ? 'x'
+        : 'y'
+    d.step =
+      rects.length > 1
+        ? d.axis === 'x'
+          ? rects[1].left - rects[0].left
+          : rects[1].top - rects[0].top
+        : 0
+    d.fromIndex = items.indexOf(d.press)
+    d.targetIndex = d.fromIndex
+  }
+
+  const onNavPress = (key: ViewKey, e: React.PointerEvent<HTMLButtonElement>) => {
+    if (e.pointerType === 'mouse') return // 鼠标走 HTML5 拖拽
+    const press = e.currentTarget
+    const pointerId = e.pointerId
+    navSuppressClick.current = false
+    navPointerDrag.current = {
+      key,
+      fromIndex: 0,
+      targetIndex: 0,
+      startX: e.clientX,
+      startY: e.clientY,
+      active: false,
+      press,
+      pointerId,
+      items: null,
+      rects: null,
+      step: 0,
+      axis: 'x',
+    }
+    clearTimeout(navPressTimer.current!)
+    navPressTimer.current = setTimeout(() => {
+      const d = navPointerDrag.current
+      if (!d || d.press !== press) return
+      d.active = true
+      try {
+        press.setPointerCapture(d.pointerId)
+      } catch {
+        // 指针可能已释放,交给 pointercancel 清理
+      }
+      press.classList.add('nav-dragging')
+      navigator.vibrate?.(15)
+      measureNavItems(d)
+    }, 380)
+  }
+
+  const onNavPointerMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    const d = navPointerDrag.current
+    if (!d || e.pointerId !== d.pointerId) return
+    if (!d.active) {
+      // 长按生效前的大幅移动是滚动手势,取消长按
+      if (Math.hypot(e.clientX - d.startX, e.clientY - d.startY) > 10) {
+        clearTimeout(navPressTimer.current!)
+        navPointerDrag.current = null
+      }
+      return
+    }
+    if (!d.rects || !d.items || !d.items.length || d.step <= 0) return
+    const from = Math.max(d.fromIndex, 0)
+    const horiz = d.axis === 'x'
+    const size = horiz ? d.rects[0].width : d.rects[0].height
+    const minD = horiz
+      ? d.rects[0].left - d.rects[from].left
+      : d.rects[0].top - d.rects[from].top
+    const maxD = horiz
+      ? d.rects[d.rects.length - 1].left - d.rects[from].left
+      : d.rects[d.rects.length - 1].top - d.rects[from].top
+    const delta = Math.min(
+      Math.max((horiz ? e.clientX : e.clientY) - (horiz ? d.startX : d.startY), minD),
+      maxD,
+    )
+    d.items[from]?.style.setProperty('transform', horiz ? `translateX(${delta}px)` : `translateY(${delta}px)`)
+    const center = (horiz ? d.rects[from].left : d.rects[from].top) + size / 2 + delta
+    const target = Math.min(
+      Math.max(
+        Math.round((center - (horiz ? d.rects[0].left : d.rects[0].top) - size / 2) / d.step),
+        0,
+      ),
+      d.items.length - 1,
+    )
+    if (target !== d.targetIndex) {
+      d.targetIndex = target
+      d.items.forEach((c, i) => {
+        if (i === from) return
+        let shift = 0
+        if (from < target && i > from && i <= target) shift = -d.step
+        if (from > target && i >= target && i < from) shift = d.step
+        c.style.setProperty(
+          'transform',
+          shift ? (horiz ? `translateX(${shift}px)` : `translateY(${shift}px)`) : '',
+        )
+      })
+    }
+  }
+
+  const endNavDrag = () => {
+    clearTimeout(navPressTimer.current!)
+    const d = navPointerDrag.current
+    navPointerDrag.current = null
+    if (!d) return
+    if (!d.active) return // 未进入拖动:交给 onClick 切视图
+    navSuppressClick.current = true
+    if (d.targetIndex !== d.fromIndex) {
+      const { fromIndex, targetIndex } = d
+      setNavOrder((prev) => {
+        const arr = [...prev]
+        const [moved] = arr.splice(fromIndex, 1)
+        arr.splice(targetIndex, 0, moved)
+        return arr
+      })
+    }
+    const items = d.items ?? Array.from(document.querySelectorAll<HTMLElement>('.nav .nav-item'))
+    items.forEach((c) => {
+      c.style.removeProperty('transform')
+      c.classList.remove('nav-dragging')
     })
   }
   const importFileRef = useRef<HTMLInputElement>(null)
@@ -1316,10 +1467,24 @@ export default function App() {
                 className={`nav-item ${view === key ? 'active' : ''} ${isDragging ? 'dragging' : ''} ${
                   isTarget ? `drop-${navDropTarget!.pos}` : ''
                 }`}
-                draggable
-                onClick={() => setView(key)}
-                title={`${meta.label} · 点击切换,拖动排序`}
+                draggable={NAV_HTML_DRAG}
+                onClick={() => {
+                  if (navSuppressClick.current) {
+                    navSuppressClick.current = false
+                    return
+                  }
+                  setView(key)
+                }}
+                onPointerDown={(e) => onNavPress(key, e)}
+                onPointerMove={onNavPointerMove}
+                onPointerUp={endNavDrag}
+                onPointerCancel={endNavDrag}
+                title={`${meta.label} · 点击切换,长按拖动排序`}
                 onDragStart={(e) => {
+                  if (navPointerDrag.current?.active) {
+                    e.preventDefault() // 长按指针拖动已接管,不再走原生拖拽
+                    return
+                  }
                   setNavDrag(key)
                   e.dataTransfer.effectAllowed = 'move'
                   e.dataTransfer.setData('text/plain', key)

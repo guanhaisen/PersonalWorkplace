@@ -272,7 +272,7 @@ textarea::placeholder {
   text-align: left;
   cursor: grab;
   transition: background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out),
-    box-shadow var(--t-fast) var(--ease-out);
+    box-shadow var(--t-fast) var(--ease-out), transform 0.16s ease;
 }
 
 .nav-item:active {
@@ -281,6 +281,14 @@ textarea::placeholder {
 
 .nav-item.dragging {
   opacity: 0.4;
+}
+
+/* 长按指针拖动:被拖项浮起跟随(transition 停掉),其余项靠 transform 平滑让位 */
+.nav-item.nav-dragging {
+  z-index: 5;
+  transition: none;
+  background: var(--paper-2);
+  box-shadow: var(--shadow-pop-sm);
 }
 
 .nav-item.drop-before {
@@ -4688,6 +4696,9 @@ kbd {
     gap: 3px;
     padding: 0 2px;
     border-radius: 8px;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
   }
 
   .nav-item .no {
