@@ -545,7 +545,8 @@ export default function App() {
   // 刷新页面回默认待机(按需求不做跨刷新记忆)
   const [mikuAction, setMikuAction] = useState<string | null>(null)
   // 可叠加表情(脸红/圈圈/前倾,两皮肤同集,参数互不冲突可同时生效)。
-  // 手部动作与舞蹈走 mikuAction 单选:经典比心/唱歌/拿葱舞,樱花花枝/花枝舞。
+  // 手部动作与舞蹈走 mikuAction 单选:经典比心/唱歌/拿葱舞;
+  // 樱花模型没有手势位(见 MIKU_SKINS 注释),该皮肤下这组按键为空,只剩可叠加表情
   // 三处 UI(右键菜单/养成页动作组)共享同一份状态
   const [emoteOn, setEmoteOn] = useState<Record<string, boolean>>({})
   // 右键菜单与 Miku 偏好(隐藏 / 缩放 / 眼神跟随 / 闲置彩蛋),均持久化
@@ -1363,7 +1364,7 @@ export default function App() {
     setEmoteOn((prev) => ({ ...prev, [name]: !prev[name] }))
   }
   // 动作组按皮肤渲染:可叠加表情来自 skinConf.emotes,手部动作来自 handActions,
-  // 舞蹈来自 dance(经典比心/唱歌/拿葱舞,樱花花枝/花枝舞)
+  // 舞蹈来自 dance(经典比心/唱歌/拿葱舞;樱花皮肤两项皆空)
   const skinConf = MIKU_SKINS[mikuSkin]
   const mikuMenuItems: MikuMenuItem[] = [
     { key: 'hide', label: '隐藏她', hint: '⌘K 恢复', onClick: hideMiku },
@@ -1923,6 +1924,7 @@ export default function App() {
                 key={`${mikuSkin}-${fabModelEpoch}`}
                 skin={mikuSkin}
                 pinnedAction={mikuAction}
+                emoteOn={emoteOn}
                 onReady={() => {
                   setMikuReady(true)
                   // 首次就绪的一次性手势提示(触屏上没有 title 可悬停):

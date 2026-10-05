@@ -17,12 +17,61 @@ const CORE_URL = '/live2d/live2dcubismcore.min.js'
 
 // ---------- 皮肤注册表 ----------
 // 两套模型同一骨架同一参数方案(QQ 人=Param131/136、水印关闭=Param137、脸红=130、
-// 圈圈=125、前倾=132),且 Param133 在两套上都是「掏出手中物」:经典=葱、樱花=花枝
-// (樱花目录里作者留下的 哭.exp3.json 写的就是 133=1,cdi3 标签「哭」有误导性,实测
-// 效果是举起花枝,并非哭泣表情)。差别在手势数量:经典有比心/唱歌/葱三选一
-// (Param133/134/135),樱花只剩花枝。换皮肤由父级换 key 重挂本组件完成,
-// skin prop 只在挂载时读一次(见 skinConfRef)
+// 圈圈=125、前倾=132),但「手势位」只有经典有:Param133/134/135 在经典上是
+// 大葱/唱歌/比心(cdi3 里就是这么标的)。樱花模型是作者未完成的改版——删了 134/135,
+// 把 133 改标「哭」,并且**133 不再用来掏出手中物**:它只掀开 4 块米粒大的眼周图元,
+// 大葱部件(Part63,樱花自己的贴图里画的仍是那根葱)变成恒隐藏、没有任何参数能掀开。
+// 于是樱花皮肤既没有手部动作,也没有能看见的舞蹈,皮肤配置里两者都为空。
+// 作者那支 哭.exp3.json(Param133=1)不足以单独成按钮,但不该丢掉:它在樱花皮肤上
+// 改走「可叠加表情 + 表情补偿」的路子(见 emotes.哭),这样按钮按下去真看得见变化。
+//
+// 参数级证据(2026-10-05 直接读两套 moc3 实测,各 141 参数、Cubism Core 5.1):
+//   经典 Param133=1 → 71 块图元透明度翻转:隐藏默认手姿 31 块、显示大葱部件 40 块
+//     (ArtMesh260~294),该簇由 Param16/45/63 驱动 → 拿葱舞看得见
+//   樱花 Param133=1 → 只有 ArtMesh357/358/361/362 四块显隐(眼周,屏幕上约 5×4 px,
+//     合计约 61px²);大葱簇 ArtMesh260~294 在樱花上恒为 opacity 0,
+//     133/16/45/63/89/90 都不改变它,而 Scene1 的曲线只碰 Param16/45/63/126/70/89/90
+//     → 舞蹈动作全部落在看不见的图元上(唯一有面积分量的是 Param70:隐藏 32 块
+//     「发光/发光电路/电路板」装饰,约 12.5k px²,渲染序靠后,多为被裙子挡住的发光件)
+//   樱花上真正能动、看得见的只有:QQ人 131(位移 350px)、前倾 132(51.9px)、
+//     脸红 130(1405px²)、圈圈 125(223px²)、水印 137,以及头九轴/呼吸/眨眼/口型
+// 换皮肤由父级换 key 重挂本组件完成,skin prop 只在挂载时读一次(见 skinConfRef)
 export type MikuSkin = 'classic' | 'sakura'
+
+/**
+ * 可叠加表情的一个参数档:激活时每帧写 on,关闭瞬间补 off(缺省 0)。mode 决定写法:
+ *   set(缺省)= 直接赋值,写在 internalModel.update 尾部;
+ *   min = 只封顶,取 min(当前值, on)——眼皮开度专用:眨眼系统每帧绝对写眼皮参数,
+ *         所以这类参数必须改在 coreModel.update 之前写(见那里的注释),否则当帧无效
+ */
+export interface EmoteParam {
+  id: string
+  on: number
+  off?: number
+  mode?: 'set' | 'min'
+}
+
+// 哭时的眼皮开度上限(0=闭 1=睁):留一点缝,像忍着泪
+const CRY_EYE_MAX = 0.7
+
+// 「哭」的泪珠增强:樱花模型自带 4 颗泪珠图元(Param133 掀开,ArtMesh357/358/361/362),
+// 但画布上只有 5×4 px,而模型侧改不了(作者只发布了运行时文件,没有 .cmo3 工程,
+// 于是在「核心算完网格之后、提交 GPU 之前」直接改这几块图元在 WASM 堆里的顶点:
+// 按质心整体放大 + 沿脸颊下滑。core 的 drawables.vertexPositions[i] 是堆上的
+// Float32Array 视图(实测源码为 new Float32Array(HEAPF32.buffer, off, n)),可直接写;
+// 渲染器每帧从同一块内存取顶点,而核心每帧都会用基础网格重算 → 写出去的值不会逐帧
+// 累积,停止「哭」后下一帧自动复位
+const TEAR_SCALE = 1.75
+/** 滴落节奏:停顿 → 平滑下滑;两眼错开半拍 */
+const TEAR_DRIP_PERIOD_MS = 2600
+const TEAR_DRIP_SLIDE_MS = 900
+/** 滑落距离(模型单位):0.055 ≈ 养成页画布 17px */
+const TEAR_DRIP_DROP = 0.055
+/** 每只眼睛的泪珠图元名(左眼 / 右眼),按名字解析成索引 */
+const TEAR_DRAWABLE_NAMES: readonly (readonly string[])[] = [
+  ['ArtMesh357', 'ArtMesh358'],
+  ['ArtMesh361', 'ArtMesh362'],
+]
 
 interface SkinConf {
   modelUrl: string
@@ -30,10 +79,10 @@ interface SkinConf {
   expressions: readonly { name: string; file: string }[]
   /** 随机轻表情池(点击/AI 回复/闲置/庆祝) */
   light: readonly string[]
-  /** 可叠加表情 → 专属参数(update 尾部每帧写 1,关闭补 0) */
-  emotes: Record<string, readonly string[]>
-  /** 舞蹈保留动作:pin 名(菜单勾选值)+ 舞蹈期间的表情(把手中的葱/花枝亮出来);
-   * 动作文件用各皮肤目录自带的 Scene1(动画只摆葱/花枝骨架,不亮出来就看不见) */
+  /** 可叠加表情 → 专属参数档(update 尾部每帧写,见 EmoteParam) */
+  emotes: Record<string, readonly EmoteParam[]>
+  /** 舞蹈保留动作:pin 名(菜单勾选值)+ 舞蹈期间的表情(把手中的葱亮出来);
+   * 动作文件用各皮肤目录自带的 Scene1;null = 该皮肤没有能看见的舞蹈 */
   dance: { pin: string; expression: string } | null
   /** 手部骨架保留动作(菜单/养成页动作组渲染用);talkMs 仅唱歌用 */
   handActions: readonly { name: string; talkMs?: number }[]
@@ -52,35 +101,77 @@ export const MIKU_SKINS: Record<MikuSkin, SkinConf> = {
       { name: '前倾', file: '前倾.exp3.json' },
     ],
     light: ['比心', '脸红', '圈圈'],
-    emotes: { 脸红: ['Param130'], 圈圈: ['Param125'], 前倾: ['Param132'] },
+    emotes: {
+      脸红: [{ id: 'Param130', on: 1 }],
+      圈圈: [{ id: 'Param125', on: 1 }],
+      前倾: [{ id: 'Param132', on: 1 }],
+    },
     dance: { pin: '拿葱舞', expression: '葱' },
     handActions: [{ name: '比心' }, { name: '唱歌', talkMs: 3200 }],
   },
   sakura: {
     modelUrl: '/live2d/miku-sakura/樱花miku.model3.json',
-    // 「花枝」即作者目录里的 哭.exp3.json(133=1):实测举起樱花枝,挂真名防误导
+    // 注册的表情限于这套骨架真做得到、也看得见的:作者自己的 VTS 热点只有
+    // QQ人/前倾/圈圈/水印/脸红/哭 六个,其中 哭 走下面的可叠加表情层(emotes.哭),
+    // 不在这里注册成独立 exp3——那支文件只写 Param133=1,单独用等于点了没反应
     expressions: [
-      { name: '花枝', file: '哭.exp3.json' },
       { name: '脸红', file: '脸红.exp3.json' },
       { name: '圈圈', file: '圈圈.exp3.json' },
       { name: 'QQ人', file: 'QQ人.exp3.json' },
       { name: '前倾', file: '前倾.exp3.json' },
     ],
     light: ['脸红', '圈圈'],
-    emotes: { 脸红: ['Param130'], 圈圈: ['Param125'], 前倾: ['Param132'] },
-    dance: { pin: '花枝舞', expression: '花枝' },
-    handActions: [{ name: '花枝' }],
+    emotes: {
+      脸红: [{ id: 'Param130', on: 1 }],
+      圈圈: [{ id: 'Param125', on: 1 }],
+      前倾: [{ id: 'Param132', on: 1 }],
+      // 哭:照写作者 哭.exp3.json 的 Param133=1(泪珠档),但它在这套骨架上只掀开
+      // 4 块共约 61px² 的眼周小图元,单靠它等于没反应——所以再叠一层这台骨架真能动、
+      // 也看得见的表情补偿:眯眼(min 封顶,眨眼仍能闭得更小)、抿嘴、抬右眉
+      // (左眉 ParamBrowLY/LAngle/LForm 在这套模型上没有绑定,写也无害故不写)、
+      // 低头(绝对写 ParamAngleY;眼神跟随是加法叠加,不会被夺走,点头时由点头压过)。
+      // 全部只碰模型自有参数,不改任何模型文件
+      哭: [
+        { id: 'Param133', on: 1 },
+        { id: 'ParamEyeLOpen', on: CRY_EYE_MAX, off: 1, mode: 'min' },
+        { id: 'ParamEyeROpen', on: CRY_EYE_MAX, off: 1, mode: 'min' },
+        { id: 'ParamMouthForm', on: -0.9 },
+        { id: 'ParamBrowRY', on: 0.8 },
+        { id: 'ParamAngleY', on: -12 },
+      ],
+    },
+    // 无舞蹈、无手部动作:见文件头「参数级证据」——Scene1 与 133 在这套模型上
+    // 都只作用在恒隐藏的图元上,挂出去就是两个点了没反应的按钮
+    dance: null,
+    handActions: [],
   },
 }
 
-/** 跨皮肤表情代偿:目标皮肤没有该表情时换成最接近的可用表情(爱意→害羞、掏葱→举花枝),
- * 返回 null = 没有代偿(如唱歌手势),调用方只保留口型等其余反应 */
+/** 跨皮肤表情代偿:目标皮肤没有该表情时换成最接近的可用表情(比心→脸红);
+ * 返回 null = 没有代偿(唱歌手势、樱花皮肤的手部动作),调用方只保留口型等其余反应 */
 export function resolveExpression(skin: MikuSkin, name: string): string | null {
   const conf = MIKU_SKINS[skin]
   if (conf.expressions.some((e) => e.name === name)) return name
   if (name === '比心') return '脸红'
-  if (name === '葱') return '花枝'
   return null
+}
+
+/**
+ * 写一个可叠加表情的参数档。三处调用:切换瞬间(激活/关闭各一次)与 update 尾部每帧。
+ * 参数不存在时 setParameterValueById 是无害空写,效果自动退化
+ */
+function applyEmoteParam(core: ParamWriter & ParamReader, p: EmoteParam, active: boolean) {
+  try {
+    if (!active) {
+      core.setParameterValueById(p.id, p.off ?? 0)
+      return
+    }
+    if (p.mode === 'min')
+      core.setParameterValueById(p.id, Math.min(core.getParameterValueById(p.id), p.on))
+    else core.setParameterValueById(p.id, p.on)
+  } catch {
+    // 模型可能在写入前被销毁,忽略
+  }
 }
 
 const EXPRESSION_MS = 2800
@@ -265,6 +356,14 @@ interface Props {
    */
   pinnedAction?: string | null
   /**
+   * 可叠加表情的当前状态(App 单真源,与右键菜单/养成页按钮共享)。
+   * 事件(MIKU_EMOTE_EVENT)只在点击那一刻生效,而舞台随时可能重挂(换皮肤/
+   * 网格自愈/HMR)——重挂后新模型上一个参数都没写,UI 却还亮着,表现为
+   * 「勾着却没效果」。这里按 prop 对账,重挂后自动把激活的表情补写回去。
+   * undefined = 不参与同步
+   */
+  emoteOn?: Record<string, boolean>
+  /**
    * 全局 QQ 人形态开关(App 的 mikuQQ,单真源)。同页双舞台 + 右键菜单/养成页
    * 动作组共用这个状态:任何一处切换后,另一个舞台(哪怕正 display:none 隐藏)
    * 也必须跟随,否则换页会出现「小按钮盒里站着普通立绘」的错位——立绘大半溢出
@@ -307,6 +406,7 @@ function MikuStageInner(
     skin = 'classic',
     pinnedAction,
     qqOn,
+    emoteOn,
     visible = true,
     onModelDead,
   }: Props,
@@ -319,7 +419,7 @@ function MikuStageInner(
   const skinConfRef = useRef(MIKU_SKINS[skin])
   // 配置身份自愈:HMR/发版后模块常量换了新对象身份,而 Fast Refresh 会保留本实例
   // 与已加载的旧模型(init effect 不重跑)——旧模型上注册的还是旧表情名,新 UI 派发
-  // 的新表情名(如「花枝」)在它上面查不到,全部静默失效,表现为「点了没反应」。
+  // 的新表情名(如经典皮肤的「比心」)在它上面查不到,全部静默失效,表现为「点了没反应」。
   // 检测到配置对象换身份即触发父级换 key 重挂,换上新配置加载的模型(每次配置
   // 变更只触发一次,重挂后 ref 由新模块重建,身份自然一致)
   useEffect(() => {
@@ -392,6 +492,31 @@ function MikuStageInner(
   const onScreenRef = useRef(true)
   // 可叠加表情的激活集合:每帧在 update 尾部写各自的专属参数(互不冲突)
   const emoteOnRef = useRef<Set<string>>(new Set())
+  // 切换瞬间把某个表情的参数档写到位(每帧那份在 update 包装里);事件与 prop 对账共用
+  const writeEmoteParams = (name: string, active: boolean) => {
+    const core = modelRef.current?.internalModel.coreModel as (ParamWriter & ParamReader) | null
+    if (core) for (const p of skinConfRef.current.emotes[name] ?? []) applyEmoteParam(core, p, active)
+  }
+  // 表情状态对账:舞台重挂(换皮肤/网格自愈/HMR)后新模型上什么都没写,而 UI 还亮着,
+  // 表现为「勾着却没效果」。按 App 传进来的单真源把激活集合补齐/清掉
+  useEffect(() => {
+    if (emoteOn === undefined) return
+    const want = new Set(Object.keys(emoteOn).filter((k) => emoteOn[k]))
+    for (const name of [...emoteOnRef.current]) {
+      if (!want.has(name)) {
+        emoteOnRef.current.delete(name)
+        writeEmoteParams(name, false)
+      }
+    }
+    for (const name of want) {
+      if (!emoteOnRef.current.has(name)) {
+        emoteOnRef.current.add(name)
+        writeEmoteParams(name, true)
+      }
+    }
+    // writeEmoteParams 只读 ref,行为不随渲染变化
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [emoteOn])
   // 视觉居中修正量(px):可见形象中心相对画布中线的偏移。普通形态出场 800ms 后
   // 实测一次;QQ 形态轮廓不同,首次变形完成后再实测一次并缓存,之后切换直接复用
   const normalOffsetRef = useRef(0)
@@ -980,24 +1105,20 @@ function MikuStageInner(
         // 所以挂到 internalModel.update 尾部(写在外层 ticker 会与眨眼竞态来回跳)。
         // 参数不存在时 setParameterValueById 是无害的空写,对应效果自动退化
         const m = model
-        const internal = m.internalModel as unknown as { update: (...args: unknown[]) => void }
-        const origUpdate = internal.update.bind(internal)
-        internal.update = (...args: unknown[]) => {
-          origUpdate(...args)
-          const core = m.internalModel.coreModel as ParamWriter & ParamReader
-          const t = performance.now()
-          // 说话口型:ParamMouthOpenY 快速开合,像在念出回复;
-          // 结束帧补写 0 闭嘴——眨眼/表情都不写嘴部参数,不补会停在最后一次的开合度
-          if (talkUntilRef.current > t) {
-            core.setParameterValueById('ParamMouthOpenY', 0.2 + Math.abs(Math.sin(t / 110)) * 0.65)
-            talkingRef.current = true
-          } else if (talkingRef.current) {
-            talkingRef.current = false
-            core.setParameterValueById('ParamMouthOpenY', 0)
+        // 眼皮开度覆盖(困困封顶 / 表情里的眯眼):**必须在核心算网格之前写**。
+        // 库的 CubismEyeBlink.updateParameters 每帧都无条件绝对写一遍眼皮参数
+        // (间隔态写 1,即睁开),而本帧网格是在 internalModel.update 尾部
+        // coreModel.update() 那一刻定格的——写在 update 之后只改到下一帧的基础值,
+        // 当帧网格仍用眨眼写的 1,效果等于没有(困困模式与「哭」的眯眼都栽在这里)。
+        // 这里挂在 coreModel.update 之前:晚于眨眼/跟随/物理/pose,早于网格
+        const core = m.internalModel.coreModel as ParamWriter & ParamReader & { update: () => void }
+        const origCoreUpdate = core.update.bind(core)
+        core.update = () => {
+          for (const name of emoteOnRef.current) {
+            for (const p of skinConfRef.current.emotes[name] ?? []) {
+              if (p.mode === 'min') applyEmoteParam(core, p, true)
+            }
           }
-          // 夜晚困困:眼皮开度封顶(表情闭眼/眨眼闭合不受影响)。封顶写的是跨帧
-          // 基础值(update 末尾 loadParameters 会回滚表情/眨眼的帧内写入),退出
-          // 夜晚时基础值会停在封顶值,补一次写回全开
           if (nightRef.current) {
             core.setParameterValueById(
               'ParamEyeLOpen',
@@ -1012,6 +1133,29 @@ function MikuStageInner(
             nightWasRef.current = false
             core.setParameterValueById('ParamEyeLOpen', 1)
             core.setParameterValueById('ParamEyeROpen', 1)
+          }
+          origCoreUpdate()
+        }
+        const internal = m.internalModel as unknown as { update: (...args: unknown[]) => void }
+        const origUpdate = internal.update.bind(internal)
+        internal.update = (...args: unknown[]) => {          origUpdate(...args)
+          const t = performance.now()
+          // 说话口型:ParamMouthOpenY 快速开合,像在念出回复;
+          // 结束帧补写 0 闭嘴——眨眼/表情都不写嘴部参数,不补会停在最后一次的开合度
+          if (talkUntilRef.current > t) {
+            core.setParameterValueById('ParamMouthOpenY', 0.2 + Math.abs(Math.sin(t / 110)) * 0.65)
+            talkingRef.current = true
+          } else if (talkingRef.current) {
+            talkingRef.current = false
+            core.setParameterValueById('ParamMouthOpenY', 0)
+          }
+          // 可叠加表情层:每帧写激活表情的参数档(关闭不写,由关闭瞬间的补 off 归位)。
+          // 放在点头之前:点头是绝对写 ParamAngleY 的短动画,该由它压过「哭」的低头;
+          // 眼皮类(mode='min')不在这里写,见上面的 coreModel.update 包装
+          for (const name of emoteOnRef.current) {
+            for (const p of skinConfRef.current.emotes[name] ?? []) {
+              if (p.mode !== 'min') applyEmoteParam(core, p, true)
+            }
           }
           // 点头:ParamAngleY 正弦两摆后自然归零(振幅随剩余时间衰减)。
           // focus 的眼神跟随每帧写头部角度,这里必须写在 update 之后才压得住
@@ -1033,12 +1177,10 @@ function MikuStageInner(
             core.setParameterValueById('EyeL_Squint', 0)
             core.setParameterValueById('EyeR_Squint', 0)
           }
-          // 可叠加表情层:每帧写激活表情的专属参数(只在尾部写,压过表情管理器
-          // 的同参写入;关闭时不写,参数由关闭瞬间的补 0 归零)。可用集按皮肤
+          // 可叠加表情层:每帧写激活表情的参数档(只在尾部写,压过表情管理器/眨眼/
+          // 眼神跟随的同参写入;关闭不写,由关闭瞬间的补 off 归位)。可用集按皮肤
           for (const name of emoteOnRef.current) {
-            for (const id of skinConfRef.current.emotes[name] ?? []) {
-              core.setParameterValueById(id, 1)
-            }
+            for (const p of skinConfRef.current.emotes[name] ?? []) applyEmoteParam(core, p, true)
           }
           // QQ 形态参数档:每帧渲染都无条件写。这个钩子挂在 internalModel.update
           // 尾部,而后者只在「真正渲染」时被 Live2DModel._render 调用(共享 ticker
@@ -1053,6 +1195,55 @@ function MikuStageInner(
           }
           core.setParameterValueById('Param131', qqLevelRef.current)
           core.setParameterValueById('Param136', qqLevelRef.current)
+        }
+        // 哭的泪珠增强:挂在 draw 之前 —— 此时本帧网格已由核心算好、尚未提交 GPU,
+        // 直接改 WASM 堆里的顶点,屏幕上的泪珠就变大并沿脸颊下滑(见 TEAR_* 注释)。
+        // 不写任何参数、不碰模型文件;核心每帧重算网格,所以停哭后自动复原
+        const rawModel = (m.internalModel.coreModel as unknown as {
+          getModel: () => { drawables: { ids: string[]; vertexPositions: Float32Array[]; dynamicFlags: Uint8Array } }
+        }).getModel()
+        const tearGroups = TEAR_DRAWABLE_NAMES.map((names) =>
+          names.map((n) => rawModel.drawables.ids.indexOf(n)).filter((i) => i >= 0),
+        ).filter((g) => g.length > 0)
+        // 渲染器可能按「顶点是否变化」决定要不要重传缓冲;这里把那一位置起来,
+        // 保证改过的顶点一定上传(位掩码从 core 的 Utils 自行推导,不写死常量)
+        const tearDirtyMask = (() => {
+          const utils = (window as unknown as { Live2DCubismCore?: { Utils?: Record<string, (v: number) => boolean> } })
+            .Live2DCubismCore?.Utils
+          for (let b = 0; b < 8; b++) if (utils?.hasVertexPositionsDidChangeBit?.(1 << b)) return 1 << b
+          return 0
+        })()
+        const internalDraw = m.internalModel as unknown as { draw: (gl: unknown) => void }
+        const origDraw = internalDraw.draw.bind(internalDraw)
+        internalDraw.draw = (gl: unknown) => {
+          if (tearGroups.length && emoteOnRef.current.has('哭')) {
+            const t = performance.now()
+            for (let g = 0; g < tearGroups.length; g++) {
+              const phase = (t + (g * TEAR_DRIP_PERIOD_MS) / 2) % TEAR_DRIP_PERIOD_MS
+              const rest = TEAR_DRIP_PERIOD_MS - TEAR_DRIP_SLIDE_MS
+              const p = phase <= rest ? 0 : (phase - rest) / TEAR_DRIP_SLIDE_MS
+              const drop = p * p * (3 - 2 * p) * TEAR_DRIP_DROP
+              for (const i of tearGroups[g]) {
+                const v = rawModel.drawables.vertexPositions[i]
+                if (!v || v.length < 6) continue
+                // 以本帧网格的质心为中心放大,再整体下移 droppx
+                let cx = 0
+                let cy = 0
+                for (let k = 0; k < v.length; k += 2) {
+                  cx += v[k]
+                  cy += v[k + 1]
+                }
+                cx /= v.length / 2
+                cy /= v.length / 2
+                for (let k = 0; k < v.length; k += 2) {
+                  v[k] = cx + (v[k] - cx) * TEAR_SCALE
+                  v[k + 1] = cy + (v[k + 1] - cy) * TEAR_SCALE - drop
+                }
+                if (tearDirtyMask) rawModel.drawables.dynamicFlags[i] |= tearDirtyMask
+              }
+            }
+          }
+          origDraw(gl)
         }
         // 每帧特效:拖动/挠痒痒/思考的摆动 + 弹跳弹簧(摆动互斥,弹跳独立)
         const onTick = () => {
@@ -1394,21 +1585,14 @@ function MikuStageInner(
       talkUntilRef.current = performance.now() + Math.min(Math.max(ms ?? 2200, 1200), 5000)
       if (readyRef.current) bounceAtRef.current = performance.now()
     }
-    // 可叠加表情开关:激活即每帧写 1,关闭瞬间补 0(参数跨帧持久,不补会停在 1)。
-    // 可用集按皮肤(skinConfRef.emotes),越权名字直接忽略
-    const writeEmoteParams = (name: string, value: number) => {
-      try {
-        const core = modelRef.current?.internalModel.coreModel as ParamWriter | null
-        for (const id of skinConfRef.current.emotes[name] ?? []) core?.setParameterValueById(id, value)
-      } catch {
-        // 模型可能在写入前被销毁,忽略
-      }
-    }
+    // 可叠加表情开关:激活写 on、关闭补 off(参数跨帧持久,不补会停在激活值)。
+    // 可用集按皮肤(skinConfRef.emotes),越权名字直接忽略;写入复用组件级
+    // writeEmoteParams(与 prop 对账那条路径同一份实现)
     const onEmote = (e: Event) => {
       if (!stageVisible()) return
       const detail = (e as CustomEvent).detail as { name?: string; clearA?: boolean } | undefined
       if (detail?.clearA) {
-        for (const name of emoteOnRef.current) writeEmoteParams(name, 0)
+        for (const name of emoteOnRef.current) writeEmoteParams(name, false)
         emoteOnRef.current.clear()
         return
       }
@@ -1416,10 +1600,10 @@ function MikuStageInner(
       if (!name || !skinConfRef.current.emotes[name]) return
       if (emoteOnRef.current.has(name)) {
         emoteOnRef.current.delete(name)
-        writeEmoteParams(name, 0)
+        writeEmoteParams(name, false)
       } else {
         emoteOnRef.current.add(name)
-        writeEmoteParams(name, 1)
+        writeEmoteParams(name, true)
       }
     }
     const onCelebrate = () => {

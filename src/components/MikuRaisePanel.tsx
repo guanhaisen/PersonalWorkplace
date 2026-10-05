@@ -407,7 +407,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuSkin,
       const cur = petNow(petRef.current)
       if (cur.fullness < 25) {
         say(pick(HUNGER_LINES), { prio: 1 })
-        // 饿肚子撒娇:举起自己的宝贝讨食(经典掏葱 / 樱花举花枝,见 resolveExpression)
+        // 饿肚子撒娇:经典掀出大葱讨食;樱花皮肤没有手中物(代偿为圈圈,见 resolveExpression)
         window.dispatchEvent(
           new CustomEvent(MIKU_PLAY_EVENT, {
             detail: { expression: resolveExpression(mikuSkin, '葱') ?? '圈圈' },
@@ -568,7 +568,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuSkin,
   const feedConf = {
     leek: {
       emoji: '🥬',
-      // 掏葱/花枝:两皮肤各自举起手中物(见 resolveExpression)
+      // 经典:掏出大葱开吃;樱花皮肤没有手中物(代偿为圈圈,见 resolveExpression)
       expression: resolveExpression(mikuSkin, '葱') ?? '圈圈',
       delta: { mood: 4, fullness: 18, bond: 2 },
       lines: ['是葱!!我最喜欢葱了!!', '葱葱葱——(眼睛亮了)', '咔嚓咔嚓…好好吃!'],
@@ -635,9 +635,20 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuSkin,
         say('肚子空空的,玩不动了…先喂点东西吧')
         return
       }
-      window.dispatchEvent(new CustomEvent(MIKU_PLAY_EVENT, { detail: { dance: true } }))
+      // 经典皮肤有大葱可拿,跳拿葱舞;樱花皮肤没有能看见的舞蹈(见 MIKU_SKINS 注释),
+      // 改用轻跳 + 小表情反馈,别让按钮点下去毫无动静
+      if (skinConf.dance) window.dispatchEvent(new CustomEvent(MIKU_PLAY_EVENT, { detail: { dance: true } }))
+      else window.dispatchEvent(new CustomEvent(MIKU_CHEER_EVENT))
       const { up, next } = settle({ mood: 10, fullness: -6, bond: 3 }, 'play')
-      if (!up) say(pick(['耶!一起玩吧~', '再来再来!', '看我的拿葱舞!', '累、累坏了…但是好开心']))
+      if (!up) {
+        say(
+          pick(
+            skinConf.dance
+              ? ['耶!一起玩吧~', '再来再来!', '看我的拿葱舞!', '累、累坏了…但是好开心']
+              : ['耶!一起玩吧~', '再来再来!', '接住我~', '累、累坏了…但是好开心'],
+          ),
+        )
+      }
       checkAch(next)
     })
 
@@ -888,6 +899,7 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuSkin,
                 key={`${stageEpoch}:${mikuSkin}`}
                 skin={mikuSkin}
                 pinnedAction={mikuAction}
+                emoteOn={emoteOn}
                 ref={stageApiRef}
                 variant="page"
                 width={size.w}
@@ -1043,8 +1055,8 @@ export default function MikuRaisePanel({ data, pet, onPet, mikuAction, mikuSkin,
               默认
             </button>
             {/* 可叠加表情(脸红/圈圈/前倾,两皮肤同集,参数互不冲突可叠加);
-                手部动作:经典比心/唱歌、樱花花枝;舞蹈两皮肤都有(拿葱舞/花枝舞,
-                动作文件各皮肤目录各自自带,舞蹈表情负责把手中的葱/花枝亮出来) */}
+                手部动作与舞蹈按皮肤给:经典 比心/唱歌/拿葱舞;樱花模型作者没做手势位,
+                两者都为空(见 MIKU_SKINS 注释),按钮组自然只剩表情与 QQ/皮肤切换 */}
             {Object.keys(skinConf.emotes).map((name) => (
               <button
                 key={name}

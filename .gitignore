@@ -13,3 +13,6 @@ miku/
 樱花miku/
 public/live2d/miku/
 public/live2d/miku-sakura/
+
+# 樱花模型「哭」泪珠改造规格:含模型内部结构与授权细节,仅本地保留
+docs/miku-sakura-tears-spec.md
