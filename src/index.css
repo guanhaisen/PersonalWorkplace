@@ -235,6 +235,21 @@ textarea::placeholder {
   align-items: center;
   gap: 10px;
   padding: 0 6px;
+  /* 品牌徽标 = 导航栏停靠拖动手柄(长按拖到屏幕四边) */
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.brand.dock-dragging {
+  opacity: 0.45;
+}
+
+/* 停靠拖动进行中:全页禁选区 + 抓取光标,防止拖动路径上拉出文本选区 */
+body.dock-drag-active {
+  cursor: grabbing;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .brand-name {
@@ -439,6 +454,67 @@ textarea::placeholder {
 .sf em {
   font-style: normal;
   color: #a7b0ab;
+}
+
+/* ---------- 品牌徽标长按拖动:四边停靠预览区 ---------- */
+/* 纯视觉层:命中与否由 App 里按指针坐标计算,这里 pointer-events 全放行,
+   不挡任何点击;悬停边铺青绿薄纱 + 内描边 + 位置名 */
+.dock-zone {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  transition: background 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
+}
+
+.dock-zone span {
+  /* 拖动中四边位置名半透明常显,悬停边全亮,提示「可停靠」 */
+  opacity: 0.5;
+  transition: opacity 0.15s ease;
+}
+
+.dock-zone-top {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 72px;
+}
+
+.dock-zone-bottom {
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 72px;
+}
+
+.dock-zone-left {
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 72px;
+}
+
+.dock-zone-right {
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 72px;
+}
+
+.dock-zone.hover {
+  background: rgba(15, 118, 110, 0.09);
+  box-shadow: inset 0 0 0 2px var(--accent);
+  color: var(--accent-deep);
+}
+
+.dock-zone.hover span {
+  opacity: 1;
 }
 
 .data-links {
@@ -1221,9 +1297,11 @@ textarea::placeholder {
   }
 }
 
-/* ---------- 导航栏位置:桌面端可选底部导航(.shell.nav-bottom) ---------- */
-/* 用户偏好(侧栏 ⇄ 底栏)存 localStorage,由 App 挂类切换;≤640 手机由移动端块
-   强制底栏,故这里全部圈在 min-width: 641px,不与移动端样式互相覆盖 */
+/* ---------- 导航栏四向停靠:左(默认)/ 右 / 顶 / 底 ---------- */
+/* 长按品牌徽标拖到屏幕边缘停靠,或按钮/命令面板轮换;偏好存 localStorage 由 App 挂类。
+   ≤640 手机由移动端块强制底栏(各类均不生效);641-860 平板宽度下左/右/顶回退为
+   既有顶部横栏(窄屏放不下竖排侧栏),仅底部可真正停靠,故 nav-bottom 圈 641、
+   dock-top/dock-right 圈 861,互不覆盖 */
 @media (min-width: 641px) {
   .shell.nav-bottom {
     flex-direction: column;
@@ -1345,12 +1423,108 @@ textarea::placeholder {
   }
 }
 
-/* 大屏底部导航:内容区仍是独立滚动容器,高度从定死 100vh 改为撑满顶栏以下剩余空间 */
+/* 大屏停靠顶/底时内容区仍是独立滚动容器,高度从定死 100vh 改为撑满条栏以下剩余空间 */
 @media (min-width: 1081px) {
-  .shell.nav-bottom .content {
+  .shell.nav-bottom .content,
+  .shell.dock-top .content {
     height: auto;
     flex: 1;
     min-height: 0;
+  }
+}
+
+/* 顶栏停靠(>861):整条侧栏横过来贴屏幕顶,与平板 ≤860 的顶部横栏同构 */
+@media (min-width: 861px) {
+  .shell.dock-top {
+    flex-direction: column;
+  }
+
+  .shell.dock-top .sidebar {
+    flex: none;
+    width: auto;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    padding: 12px 18px;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+    z-index: 40;
+  }
+
+  .shell.dock-top .collapse-btn,
+  .shell.dock-top .brand-sub,
+  .shell.dock-top .sf {
+    display: none;
+  }
+
+  .shell.dock-top .brand {
+    flex: none;
+    padding-right: 8px;
+  }
+
+  /* 导航横排、放得下就一行,窄了折行(条栏在文档流内,内容区自然让位) */
+  .shell.dock-top .nav {
+    margin-top: 0;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 2px;
+  }
+
+  .shell.dock-top .nav-item {
+    height: 34px;
+    padding: 0 8px;
+  }
+
+  /* HTML5 拖拽换位的落点指示随横排转向:左右插线 */
+  .shell.dock-top .nav-item.drop-before {
+    box-shadow: inset 2px 0 0 var(--accent);
+  }
+
+  .shell.dock-top .nav-item.drop-after {
+    box-shadow: inset -2px 0 0 var(--accent);
+  }
+
+  .shell.dock-top .sidebar-foot {
+    flex: none;
+    flex-direction: row;
+    align-items: center;
+    gap: 14px;
+    margin: 0 0 0 auto;
+    padding: 0;
+    border-top: none;
+  }
+
+  .shell.dock-top .user-line {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  .shell.dock-top .save-line,
+  .shell.dock-top .data-links {
+    flex: none;
+  }
+}
+
+/* 右栏停靠(>861):竖排侧栏整体镜像到内容区右侧,条目/底部信息不变 */
+@media (min-width: 861px) {
+  .shell.dock-right .sidebar {
+    order: 2;
+    border-right: none;
+    border-left: 1px solid var(--line);
+  }
+
+  /* 收起按钮与箭头方向随镜像翻到左侧 */
+  .shell.dock-right .collapse-btn {
+    right: auto;
+    left: 10px;
+  }
+
+  .shell.dock-right .sidebar.collapsed .collapse-btn {
+    right: auto;
+    left: 50%;
+    transform: translateX(-50%);
   }
 }
 

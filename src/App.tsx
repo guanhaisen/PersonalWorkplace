@@ -133,13 +133,20 @@ function loadNavOrder(): ViewKey[] {
   return [...DEFAULT_NAV]
 }
 
-// 导航栏位置:桌面端可在左侧栏/底部栏之间自由切换并记住选择;
-// ≤640 手机固定底栏(样式由媒体查询强制),此偏好仅在 >640 生效
+// 导航栏停靠位置:屏幕上/下/左/右四边。长按品牌徽标拖到屏幕边缘停靠(拖动中四边
+// 出现预览区),或点侧栏脚部按钮/命令面板条目按 左→底→右→顶 轮换;选择持久化。
+// ≤640 手机固定底栏(样式由媒体查询强制),偏好仅在 >640 生效;>861 才有四向差异,
+// 641-860 平板宽度下左/右/顶回退为既有顶部横栏(窄屏放不下竖排侧栏)。
 const NAV_POS_KEY = 'nav.position.v1'
-type NavPos = 'side' | 'bottom'
+type DockPos = 'left' | 'right' | 'top' | 'bottom'
+const DOCK_LABEL: Record<DockPos, string> = { left: '左栏', right: '右栏', top: '顶栏', bottom: '底栏' }
+const DOCK_NEXT: Record<DockPos, DockPos> = { left: 'bottom', bottom: 'right', right: 'top', top: 'left' }
 
-function loadNavPos(): NavPos {
-  return localStorage.getItem(NAV_POS_KEY) === 'bottom' ? 'bottom' : 'side'
+function loadNavPos(): DockPos {
+  const raw = localStorage.getItem(NAV_POS_KEY)
+  if (raw === 'left' || raw === 'right' || raw === 'top' || raw === 'bottom') return raw
+  if (raw === 'side') return 'left' // 两向时代的旧档
+  return 'left'
 }
 
 // 触屏设备不走 HTML5 拖拽(长按行为怪异且不可靠),改用长按指针拖动;鼠标设备保留原生拖拽
@@ -161,7 +168,7 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [slots, setSlots] = useState<PanelId[]>(loadSlots)
   const [navOrder, setNavOrder] = useState<ViewKey[]>(loadNavOrder)
-  const [navPos, setNavPos] = useState<NavPos>(loadNavPos)
+  const [navPos, setNavPos] = useState<DockPos>(loadNavPos)
   const [navDrag, setNavDrag] = useState<ViewKey | null>(null)
   const [navDropTarget, setNavDropTarget] = useState<{ key: ViewKey; pos: 'before' | 'after' } | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
@@ -193,7 +200,12 @@ export default function App() {
   // 拖动激活后拦截触摸滚动(长按前不拦,保证列表可正常滑动)
   useEffect(() => {
     const block = (e: TouchEvent) => {
-      if (capDrag.current?.active || navPointerDrag.current?.active) e.preventDefault()
+      if (
+        capDrag.current?.active ||
+        navPointerDrag.current?.active ||
+        dockDragRef.current?.active
+      )
+        e.preventDefault()
     }
     document.addEventListener('touchmove', block, { passive: false })
     return () => document.removeEventListener('touchmove', block)
@@ -451,6 +463,107 @@ export default function App() {
       c.classList.remove('nav-dragging')
     })
   }
+
+  // ---------- 品牌徽标长按拖动 = 导航栏停靠位置(上/下/左/右) ----------
+  // 与导航项长按同一套手感:长按约 380ms 进入,指针捕获后拖到距屏幕边缘 72px 内
+  // 高亮对应预览区,松手停靠该边;未满阈值是滚动手势,直接取消。Esc 或拖回屏幕
+  // 中部松手 = 不变。手机(≤640)固定底栏,不启用。
+  const DOCK_ZONE_PX = 72
+
+  const [dockDrag, setDockDrag] = useState<{ hover: DockPos | null } | null>(null)
+  const dockDragRef = useRef<{
+    pointerId: number
+    startX: number
+    startY: number
+    brand: HTMLDivElement
+    active: boolean
+    hover: DockPos | null
+  } | null>(null)
+  const dockPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // 指针离哪条边最近;四边都不在阈值内则返回 null(拖回中部 = 取消)
+  const dockHoverAt = (x: number, y: number): DockPos | null => {
+    const dists: [DockPos, number][] = [
+      ['top', y],
+      ['bottom', window.innerHeight - y],
+      ['left', x],
+      ['right', window.innerWidth - x],
+    ]
+    dists.sort((a, b) => a[1] - b[1])
+    return dists[0][1] > DOCK_ZONE_PX ? null : dists[0][0]
+  }
+
+  const onDockPress = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (dockDragRef.current) return // 已有拖动进行中(多指),忽略后来的按压
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    if (window.matchMedia('(max-width: 640px)').matches) return
+    const brand = e.currentTarget
+    dockDragRef.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      brand,
+      active: false,
+      hover: null,
+    }
+    clearTimeout(dockPressTimer.current!)
+    dockPressTimer.current = setTimeout(() => {
+      const d = dockDragRef.current
+      if (!d) return
+      d.active = true
+      try {
+        d.brand.setPointerCapture(d.pointerId)
+      } catch {
+        // 指针可能已释放,交给 pointercancel 清理
+      }
+      d.brand.classList.add('dock-dragging')
+      document.body.classList.add('dock-drag-active')
+      navigator.vibrate?.(15)
+      setDockDrag({ hover: null })
+    }, 380)
+  }
+
+  const onDockPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = dockDragRef.current
+    if (!d || e.pointerId !== d.pointerId) return
+    if (!d.active) {
+      // 长按生效前的大幅移动是滚动手势,取消长按
+      if (Math.hypot(e.clientX - d.startX, e.clientY - d.startY) > 10) {
+        clearTimeout(dockPressTimer.current!)
+        dockDragRef.current = null
+      }
+      return
+    }
+    d.hover = dockHoverAt(e.clientX, e.clientY)
+    setDockDrag((prev) => (prev && prev.hover === d.hover ? prev : { hover: d.hover }))
+  }
+
+  // 松手(apply=true 按当前高亮边停靠)与取消共用清理
+  const clearDockDrag = (apply: boolean) => {
+    clearTimeout(dockPressTimer.current!)
+    const d = dockDragRef.current
+    dockDragRef.current = null
+    if (d) {
+      d.brand.classList.remove('dock-dragging')
+      document.body.classList.remove('dock-drag-active')
+    }
+    setDockDrag(null)
+    if (apply && d?.active && d.hover) setNavPos(d.hover)
+  }
+  const endDockDrag = () => clearDockDrag(true)
+  const cancelDockDrag = () => clearDockDrag(false)
+
+  const dockDragging = dockDrag !== null
+  useEffect(() => {
+    if (!dockDragging) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') cancelDockDrag()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // cancelDockDrag 每次渲染重建但只依赖 ref 与 setState,无需进依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dockDragging])
   const importFileRef = useRef<HTMLInputElement>(null)
   const dataRef = useRef<AppData | null>(null)
 
@@ -954,8 +1067,8 @@ export default function App() {
     localStorage.setItem(NAV_POS_KEY, navPos)
   }, [navPos])
 
-  // 侧边 ⇄ 底部互切;两个入口(侧栏脚部按钮/命令面板)共用
-  const toggleNavPos = () => setNavPos((p) => (p === 'side' ? 'bottom' : 'side'))
+  // 四向轮换:左→底→右→顶→左;拖拽之外的轻量入口(按钮/命令面板)共用
+  const toggleNavPos = () => setNavPos((p) => DOCK_NEXT[p])
 
   useEffect(() => {
     localStorage.setItem('sidebar.collapsed', sidebarCollapsed ? '1' : '0')
@@ -1294,12 +1407,12 @@ export default function App() {
     { id: 'new-note', label: '记一笔随手记', hint: 'M', run: () => { setView('notes'); setTimeout(() => emit('workbench:focus-note-input'), 0) } },
     { id: 'ask-ai', label: '询问 Miku', run: () => { setView('ai'); setTimeout(() => emit('workbench:ai-focus'), 0) } },
     { id: 'export', label: '导出全部数据', run: handleExport },
-    // 导航栏位置切换:仅桌面/平板有意义(手机固定底栏),≤640 不进面板
+    // 导航栏位置轮换:仅桌面/平板有意义(手机固定底栏),≤640 不进面板
     ...(window.matchMedia('(min-width: 641px)').matches
       ? [
           {
             id: 'nav-pos',
-            label: `导航栏移到${navPos === 'side' ? '底部' : '侧边'}`,
+            label: `导航栏移到${DOCK_LABEL[DOCK_NEXT[navPos]]}`,
             run: toggleNavPos,
           },
         ]
@@ -1534,19 +1647,45 @@ export default function App() {
 
   // 所有面板只挂载一次,视图切换仅改 CSS 网格布局与可见性,
   // 保证各面板内部状态(筛选、草稿等)跨视图保留
+  // 停靠类:左栏是默认样式不挂类;底栏沿用已发布的 .nav-bottom;右/顶各一套
+  const dockClass = navPos === 'left' ? '' : navPos === 'bottom' ? 'nav-bottom' : `dock-${navPos}`
+
   return (
-    // 底部导航模式:sidebar 变顶栏、nav 变 fixed 底栏,样式见 index.css 的 .shell.nav-bottom
-    <div className={`shell ${navPos === 'bottom' ? 'nav-bottom' : ''}`}>
-      {/* 底部模式下不套 collapsed(收起按钮已隐藏),避免图标-only 样式污染顶栏;切回侧栏时原状态仍在 */}
-      <aside className={`sidebar ${navPos === 'side' && sidebarCollapsed ? 'collapsed' : ''}`}>
+    // 四向停靠:左 = 默认侧栏;右 = 镜像侧栏;顶 = 顶部横栏;底 = 顶栏 + fixed 底部导航,
+    // 样式见 index.css 的 .shell.nav-bottom / .shell.dock-top / .shell.dock-right
+    <div className={`shell ${dockClass}`}>
+      {/* 停靠预览区:拖动中四边各一条,悬停边高亮;纯视觉,命中由坐标计算(pointer-events 放行) */}
+      {dockDrag &&
+        (['top', 'bottom', 'left', 'right'] as const).map((pos) => (
+          <div
+            key={pos}
+            className={`dock-zone dock-zone-${pos}${dockDrag.hover === pos ? ' hover' : ''}`}
+          >
+            <span>{DOCK_LABEL[pos]}</span>
+          </div>
+        ))}
+      {/* 竖排停靠(左/右)才套 collapsed;横排时收起按钮隐藏,避免图标-only 样式污染条栏,切回竖排时原状态仍在 */}
+      <aside
+        className={`sidebar ${
+          (navPos === 'left' || navPos === 'right') && sidebarCollapsed ? 'collapsed' : ''
+        }`}
+      >
         <button
           className="collapse-btn"
           onClick={() => setSidebarCollapsed((v) => !v)}
           title={sidebarCollapsed ? '展开导航' : '收起导航'}
         >
-          {sidebarCollapsed ? '›' : '‹'}
+          {sidebarCollapsed ? (navPos === 'right' ? '‹' : '›') : navPos === 'right' ? '›' : '‹'}
         </button>
-        <div className="brand">
+        {/* 品牌徽标是导航栏停靠的拖动手柄:长按拖到屏幕四边换位置 */}
+        <div
+          className="brand"
+          title="长按拖到屏幕边缘,可把导航栏停靠到 上/下/左/右"
+          onPointerDown={onDockPress}
+          onPointerMove={onDockPointerMove}
+          onPointerUp={endDockDrag}
+          onPointerCancel={endDockDrag}
+        >
           <BrandMark />
           <div>
             <div className="brand-name">个人工作台</div>
@@ -1655,9 +1794,9 @@ export default function App() {
             <button
               className="data-link nav-pos-btn"
               onClick={toggleNavPos}
-              title={`导航栏移到${navPos === 'side' ? '底部' : '侧边'}`}
+              title={`导航栏停靠位置:点击切到${DOCK_LABEL[DOCK_NEXT[navPos]]};也可长按品牌徽标拖到屏幕四边`}
             >
-              {navPos === 'side' ? '底栏' : '侧栏'}
+              {DOCK_LABEL[DOCK_NEXT[navPos]]}
             </button>
           </div>
           <input
