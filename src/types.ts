@@ -50,6 +50,21 @@ export interface ChatMsg {
   ts: string
   /** 该轮回复消耗的 token(工具多轮时为各次请求合计);服务商未返回时不存 */
   usage?: ChatUsage
+  /** 所属会话;旧数据的裸消息由前端迁移时补齐 */
+  sessionId?: string
+}
+
+/** Miku 的一个对话会话:消息本体在 chats 集合(带 sessionId),滚动摘要存在这里 */
+export interface ChatSession {
+  id: string
+  /** 标题:首轮提问截断占位,随后由 AI 后台起名;空 = 未命名对话 */
+  title: string
+  createdAt: string
+  updatedAt: string
+  /** 更早消息的滚动摘要(≤300 字,注入 system 供模型延续语境) */
+  summary?: string
+  /** 摘要已覆盖到的时间点(该 ts 及更早的旧消息已计入摘要) */
+  summaryUntil?: string
 }
 
 /** 总览头部收藏的网页快捷方式 */
@@ -81,11 +96,11 @@ export interface NoteEntry {
   ts: string
 }
 
-/** AI 整理出的日报/周报(markdown 全文) */
+/** AI 整理出的日报/周报/月报(markdown 全文) */
 export interface GenReport {
-  /** 日报 = YYYY-MM-DD,周报 = ISO 周标识 YYYY-Www */
+  /** 日报 = YYYY-MM-DD,周报 = ISO 周标识 YYYY-Www,月报 = YYYY-MM */
   id: string
-  kind: 'daily' | 'weekly'
+  kind: 'daily' | 'weekly' | 'monthly'
   /** 当前展示用 markdown 正文(AI 失败时为本地兜底合并版) */
   content: string
   /** true = 内容出自 AI 整理;false = 本地兜底合并(可在界面重试 AI) */
@@ -95,6 +110,15 @@ export interface GenReport {
   updatedAt: string
   /** 最近一次整理的 token 用量(服务商未返回时不存) */
   usage?: ChatUsage
+  /** AI 周报点评(报告页生成后写回,刷新不丢;仅 kind:'weekly') */
+  comment?: string
+}
+
+/** Miku 的长期记忆:模型经 remember/forget_memory 工具维护,跨会话注入系统提示 */
+export interface MemoryItem {
+  id: string
+  content: string
+  createdAt: string
 }
 
 export interface AppData {
@@ -102,8 +126,10 @@ export interface AppData {
   courses: Course[]
   habits: Habit[]
   chats: ChatMsg[]
+  chatSessions: ChatSession[]
   links: LinkItem[]
   reminders: Reminder[]
   notes: NoteEntry[]
   reports: GenReport[]
+  memories: MemoryItem[]
 }

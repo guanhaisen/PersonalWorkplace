@@ -1700,7 +1700,7 @@ export default function App() {
             hab: <HabitsPanel habits={data.habits} update={update} />,
             quicknote: <QuickNoteCard data={data} org={notesOrg} />,
             ai: <AiPanel data={data} update={update} onNavigate={setView} />,
-            report: <ReportPanel data={data} />,
+            report: <ReportPanel data={data} update={update} />,
             notes: <NotesView data={data} org={notesOrg} />,
           }
           // 各视图的行结构;总览行结构随课表卡位置自适应,其余面板保持挂载(隐藏)

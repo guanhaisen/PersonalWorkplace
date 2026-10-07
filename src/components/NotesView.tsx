@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AppData, NoteEntry } from '../types'
 import { todayStr } from '../api'
-import { isoWeekKey, weekKeyToDays, weekdayCn, type NotesOrg } from '../notesOrg'
+import { isoWeekKey, monthBounds, monthKeyOf, weekKeyToDays, weekdayCn, type NotesOrg } from '../notesOrg'
 import MiniMarkdown from './MiniMarkdown'
 
 interface Props {
@@ -28,21 +28,25 @@ const dstr = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d
 
 export default function NotesView({ data, org }: Props) {
   const [draft, setDraft] = useState('')
-  const [tab, setTab] = useState<'daily' | 'weekly'>('daily')
+  const [tab, setTab] = useState<'daily' | 'weekly' | 'monthly'>('daily')
   // 日报查看偏移:0 = 今天,负数往前(不允许未来)
   const [dayOffset, setDayOffset] = useState(0)
   // 周报查看偏移:0 = 本周
   const [weekOffset, setWeekOffset] = useState(0)
+  // 月报查看偏移:0 = 本月
+  const [monthOffset, setMonthOffset] = useState(0)
   const [weeklyError, setWeeklyError] = useState('')
+  const [monthlyError, setMonthlyError] = useState('')
   const [copied, setCopied] = useState('')
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const orgRef = useRef(org)
   orgRef.current = org
 
   const today = todayStr()
-  // 挂载即补齐缺失的历史周报(整理链内部串行、失败不重试,与 SpringNote 的启动补齐同思路)
+  // 挂载即补齐缺失的历史周报与月报(整理链内部串行、失败不重试,与 SpringNote 的启动补齐同思路)
   useEffect(() => {
     orgRef.current.backfillWeeks()
+    orgRef.current.backfillMonths()
   }, [])
   // 有随手记但当天还没有日报的(如导入的数据),挂载时补触发一次整理
   useEffect(() => {
@@ -94,6 +98,12 @@ export default function NotesView({ data, org }: Props) {
     return isoWeekKey(dstr(d))
   }, [weekOffset])
   const weekDays = useMemo(() => weekKeyToDays(weekKey), [weekKey])
+  const monthKey = useMemo(() => {
+    const d = new Date()
+    d.setDate(1)
+    d.setMonth(d.getMonth() + monthOffset)
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`
+  }, [monthOffset])
 
   const dayEntries = useMemo(
     () => data.notes.filter((n) => n.date === selDate).sort((a, b) => a.ts.localeCompare(b.ts)),
@@ -106,14 +116,31 @@ export default function NotesView({ data, org }: Props) {
     () => weekDays.some((d) => data.notes.some((n) => n.date === d) || data.reports.some((r) => r.kind === 'daily' && r.id === d)),
     [weekDays, data.notes, data.reports],
   )
+  const monthReport = data.reports.find((r) => r.kind === 'monthly' && r.id === monthKey)
+  // 该月是否有可生成材料(周报/日报/随手记任一)
+  const monthHasMaterial = useMemo(
+    () =>
+      data.reports.some((r) => r.kind === 'weekly' && monthKeyOf(weekKeyToDays(r.id)[0]) === monthKey) ||
+      data.reports.some((r) => r.kind === 'daily' && monthKeyOf(r.id) === monthKey) ||
+      data.notes.some((n) => monthKeyOf(n.date) === monthKey),
+    [data.reports, data.notes, monthKey],
+  )
   const todayReport = data.reports.find((r) => r.kind === 'daily' && r.id === today)
   const todayPending = todayReport?.ai ? (todayReport.pendingIds?.length ?? 0) : 0
   const generatingWeeks = Object.keys(org.generating)
+  const generatingMonths = Object.keys(org.generatingMonths)
 
   const genWeekly = (force: boolean) => {
     setWeeklyError('')
     org.generateWeekly(weekKey, force).catch((err) => {
       setWeeklyError((err as Error)?.message || '生成失败,请重试')
+    })
+  }
+
+  const genMonthly = (force: boolean) => {
+    setMonthlyError('')
+    org.generateMonthly(monthKey, force).catch((err) => {
+      setMonthlyError((err as Error)?.message || '生成失败,请重试')
     })
   }
 
@@ -157,6 +184,22 @@ export default function NotesView({ data, org }: Props) {
     </div>
   )
 
+  const monthDays = useMemo(() => monthBounds(monthKey), [monthKey])
+  const monthNav = (
+    <div className="week-nav">
+      <button className="week-btn" title="上一月" onClick={() => setMonthOffset((o) => o - 1)}>
+        ‹
+      </button>
+      <span className="week-label">
+        {monthKey} · {short(monthDays.start)} ~ {short(monthDays.end)}
+        {monthOffset === 0 ? ' · 本月' : ''}
+      </span>
+      <button className="week-btn" title="下一月" disabled={monthOffset >= 0} onClick={() => setMonthOffset((o) => o + 1)}>
+        ›
+      </button>
+    </div>
+  )
+
   const reportActions = (id: string, content: string) => (
     <div className="note-rep-actions">
       <button className="btn ghost note-act-btn" onClick={() => copyReport(id, content)}>
@@ -175,6 +218,9 @@ export default function NotesView({ data, org }: Props) {
         {org.merging[today] && <span className="note-busy">Miku 正在整理今日日报…</span>}
         {generatingWeeks.length > 0 && (
           <span className="note-busy">正在补齐周报 {generatingWeeks.join('、')}</span>
+        )}
+        {generatingMonths.length > 0 && (
+          <span className="note-busy">正在生成月报 {generatingMonths.join('、')}</span>
         )}
       </header>
 
@@ -222,6 +268,14 @@ export default function NotesView({ data, org }: Props) {
           onClick={() => setTab('weekly')}
         >
           周报
+        </button>
+        <button
+          className={`note-tab ${tab === 'monthly' ? 'on' : ''}`}
+          role="tab"
+          aria-selected={tab === 'monthly'}
+          onClick={() => setTab('monthly')}
+        >
+          月报
         </button>
       </div>
 
@@ -295,7 +349,7 @@ export default function NotesView({ data, org }: Props) {
             </div>
           )}
         </section>
-      ) : (
+      ) : tab === 'weekly' ? (
         <section className="rsec note-sec">
           <div className="note-sec-head">
             <h3 className="rsec-title">周报</h3>
@@ -347,6 +401,66 @@ export default function NotesView({ data, org }: Props) {
               {weekHasMaterial && (
                 <button className="btn solid note-act-btn" onClick={() => genWeekly(true)} disabled={!org.aiUsable}>
                   {weekOffset === 0 ? '生成本周周报' : '生成周报'}
+                </button>
+              )}
+            </div>
+          )}
+        </section>
+      ) : (
+        <section className="rsec note-sec">
+          <div className="note-sec-head">
+            <h3 className="rsec-title">月报</h3>
+            {monthNav}
+          </div>
+          {monthlyError && (
+            <div className="ai-error">
+              <span>{monthlyError}</span>
+              <button onClick={() => setMonthlyError('')}>知道了</button>
+            </div>
+          )}
+          {org.generatingMonths[monthKey] ? (
+            <div className="ai-bubble ai-typing note-typing">
+              <span className="ai-dots">
+                <i />
+                <i />
+                <i />
+              </span>
+              Miku 正在根据这个月的周报写月报…
+            </div>
+          ) : monthReport?.content.trim() ? (
+            <div className="note-report">
+              <MiniMarkdown text={monthReport.content} />
+              <div className="note-rep-actions">
+                <button
+                  className="btn ghost note-act-btn"
+                  onClick={() => genMonthly(true)}
+                  disabled={!org.aiUsable}
+                  title="依据当前记录重新生成"
+                >
+                  重新生成
+                </button>
+                <button
+                  className="btn ghost note-act-btn"
+                  onClick={() => copyReport(monthReport.id, monthReport.content)}
+                >
+                  {copied === monthReport.id ? '已复制 ✓' : '复制'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="note-week-empty">
+              <div className="empty-hint">
+                {monthHasMaterial
+                  ? monthOffset === 0
+                    ? '这个月还在进行中,随时可以生成当前的月报'
+                    : org.aiUsable
+                      ? '这个月还没有月报,可以现在生成'
+                      : '这个月还没有月报(未配置 AI)'
+                  : '这个月没有周报、日报或随手记,没有可整理的材料'}
+              </div>
+              {monthHasMaterial && (
+                <button className="btn solid note-act-btn" onClick={() => genMonthly(true)} disabled={!org.aiUsable}>
+                  {monthOffset === 0 ? '生成本月月报' : '生成月报'}
                 </button>
               )}
             </div>

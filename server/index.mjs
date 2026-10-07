@@ -238,6 +238,7 @@ async function upstreamError(res, upstream) {
 
 // 聊天代理:前端传 messages(含 system 快照)与 tools,返回模型的一条 message
 // (文本或 tool_calls);工具执行与多轮编排都在前端完成。
+// body.stream === true 时走 SSE 直通:上游的分片事件流原样转发,解析都在前端。
 app.post('/api/ai/chat', requireUser, h(async (req, res) => {
   const cfg = readAiConfig(req.user.id)
   if (!cfg.baseUrl || !cfg.model || !cfg.apiKey) {
@@ -256,6 +257,32 @@ app.post('/api/ai/chat', requireUser, h(async (req, res) => {
   const clientGone = new AbortController()
   res.on('close', () => clientGone.abort())
   try {
+    if (body.stream === true) {
+      payload.stream = true
+      const upstream = await callUpstream(cfg, payload, clientGone.signal)
+      if (!upstream.ok) {
+        // 响应头还没发,照常把上游错误翻译成 JSON 给前端
+        await upstreamError(res, upstream)
+        return
+      }
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      })
+      const reader = upstream.body.getReader()
+      try {
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          res.write(Buffer.from(value))
+        }
+      } finally {
+        res.end()
+      }
+      return
+    }
     const upstream = await callUpstream(cfg, payload, clientGone.signal)
     if (!upstream.ok) {
       await upstreamError(res, upstream)
@@ -265,6 +292,11 @@ app.post('/api/ai/chat', requireUser, h(async (req, res) => {
     res.json({ message: data.choices?.[0]?.message ?? null, usage: data.usage ?? null })
   } catch (err) {
     if (clientGone.signal.aborted) return // 客户端已离开,响应无人接收
+    if (res.headersSent) {
+      // SSE 已开始后才出错(如上游中断):连接只能作废,前端读到截断的流会当作结束
+      res.end()
+      return
+    }
     res.status(502).json({ error: 'AI_NETWORK', message: `无法连接 AI 服务:${err?.message || err}` })
   }
 }))

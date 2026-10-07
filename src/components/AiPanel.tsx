@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { AppData, ChatUsage, NoteEntry } from '../types'
+import type { AppData, ChatMsg, ChatSession, ChatUsage, Course, NoteEntry, Todo } from '../types'
 import type { UpdateFn, ViewKey } from '../App'
 import { todayStr, uid, nowLocalStr, DUE_AT_RE } from '../api'
 import { readDailyReport, readWeeklyReport, searchNotes } from '../notesOrg'
+import { queryStats, type StatsRange, type StatsScope } from '../aiStats'
 import {
   AI_TOOLS,
   aiChat,
+  aiChatStream,
   buildSystemPrompt,
   loadAiConfig,
   saveAiConfig,
@@ -15,6 +17,7 @@ import {
   type UpstreamMessage,
 } from '../ai'
 import { MIKU_CELEBRATE_EVENT, MIKU_EXPRESS_EVENT, MIKU_SPEAK_EVENT, MIKU_THINKING_EVENT } from './MikuStage'
+import MiniMarkdown from './MiniMarkdown'
 
 interface Props {
   data: AppData
@@ -39,6 +42,9 @@ const PRESETS: { label: string; baseUrl: string; model: string }[] = [
 
 const VIEWS: ViewKey[] = ['overview', 'todos', 'schedule', 'habits', 'notes', 'ai', 'raise', 'report']
 const nowIso = () => new Date().toISOString()
+// 上下文窗口:每次带最近 N 条会话消息;更早的压成滚动摘要
+const CHAT_WINDOW = 12
+const cutTitle = (s: string) => (s.length > 18 ? `${s.slice(0, 18)}…` : s)
 
 export default function AiPanel({
   data,
@@ -52,12 +58,18 @@ export default function AiPanel({
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [toolNote, setToolNote] = useState('')
+  // 流式回复的实时增量:非空时气泡直接展示(面板与悬浮气泡共用)
+  const [streamText, setStreamText] = useState('')
   const [error, setError] = useState('')
   // 气泡模式:本次快速提问已收到过回复(打开时只显示输入条,不翻旧回复)
   const [quickReplied, setQuickReplied] = useState(false)
   const [cfg, setCfg] = useState<AiConfigInfo | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [usageOpen, setUsageOpen] = useState(false)
+  const [memOpen, setMemOpen] = useState(false)
+  const [sessOpen, setSessOpen] = useState(false)
+  // 当前会话:空 = 跟随最近活跃的会话
+  const [sessionId, setSessionId] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -95,11 +107,11 @@ export default function AiPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 新消息 / 忙碌状态变化时滚到底部
+  // 新消息 / 忙碌状态 / 流式增量变化时滚到底部
   useEffect(() => {
     const el = listRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [data.chats.length, busy, toolNote])
+  }, [data.chats.length, busy, toolNote, streamText])
 
   // 执行模型请求的工具调用,返回给模型的结果对象
   const executeTool = (call: ToolCall): unknown => {
@@ -142,6 +154,49 @@ export default function AiPanel({
         )
         return { ok: true }
       }
+      case 'add_todos': {
+        const items = Array.isArray(args.items) ? args.items : []
+        const valid = items
+          .map((it) => {
+            const o = it as Record<string, unknown>
+            return { title: str(o?.title), dueDate: str(o?.dueDate) || undefined }
+          })
+          .filter((it) => it.title)
+        if (!valid.length) return { ok: false, error: 'items 为空或缺少 title' }
+        // 上限保护:一次拆解 20 条足够,再多说明模型跑偏了
+        const created = valid.slice(0, 20)
+        applyToolUpdate('todos', (list) => [
+          ...list,
+          ...created.map((it) => ({
+            id: uid(),
+            title: it.title,
+            done: false,
+            dueDate: it.dueDate,
+            createdAt: nowIso(),
+          })),
+        ])
+        return { ok: true, count: created.length, note: valid.length > 20 ? '仅创建前 20 条' : undefined }
+      }
+      case 'update_todo': {
+        const id = str(args.id)
+        const todo = d.todos.find((t) => t.id === id)
+        if (!todo) return { ok: false, error: `未找到待办 ${id}` }
+        const patch: Partial<Todo> = {}
+        const title = str(args.title)
+        if (title) patch.title = title
+        if (args.dueDate !== undefined) {
+          const due = str(args.dueDate)
+          if (due && !/^\d{4}-\d{2}-\d{2}$/.test(due)) return { ok: false, error: 'dueDate 需为 YYYY-MM-DD 或空字符串' }
+          patch.dueDate = due || undefined
+        }
+        if (typeof args.done === 'boolean') {
+          patch.done = args.done
+          patch.completedAt = args.done ? nowIso() : undefined
+        }
+        if (!Object.keys(patch).length) return { ok: false, error: '没有给出任何要修改的字段' }
+        applyToolUpdate('todos', (items) => items.map((t) => (t.id === id ? { ...t, ...patch } : t)))
+        return { ok: true }
+      }
       case 'delete_todo': {
         const id = str(args.id)
         if (!d.todos.some((t) => t.id === id)) return { ok: false, error: `未找到待办 ${id}` }
@@ -175,6 +230,41 @@ export default function AiPanel({
             color: items.length % 8,
           },
         ])
+        return { ok: true }
+      }
+      case 'update_course': {
+        const id = str(args.id)
+        const course = d.courses.find((c) => c.id === id)
+        if (!course) return { ok: false, error: `未找到课程 ${id}` }
+        const patch: Partial<Course> = {}
+        const name = str(args.name)
+        if (name) patch.name = name
+        if (args.weekday !== undefined) {
+          const wd = Math.round(Number(args.weekday))
+          if (!Number.isInteger(wd) || wd < 1 || wd > 7)
+            return { ok: false, error: 'weekday 需为 1(周一)~7(周日)' }
+          patch.weekday = wd
+        }
+        const start = str(args.start)
+        const end = str(args.end)
+        if (start && !/^([01]?\d|2[0-3]):[0-5]\d$/.test(start)) return { ok: false, error: 'start 格式需为 HH:mm' }
+        if (end && !/^([01]?\d|2[0-3]):[0-5]\d$/.test(end)) return { ok: false, error: 'end 格式需为 HH:mm' }
+        if (start) patch.start = start.padStart(5, '0')
+        if (end) patch.end = end.padStart(5, '0')
+        // 改了时间要保证改完后仍是合法区间(与 add_course 同样校验)
+        const ns = patch.start ?? course.start
+        const ne = patch.end ?? course.end
+        if (ne <= ns) return { ok: false, error: '结束时间需晚于开始时间' }
+        if (args.location !== undefined) patch.location = str(args.location) || undefined
+        if (args.teacher !== undefined) patch.teacher = str(args.teacher) || undefined
+        if (!Object.keys(patch).length) return { ok: false, error: '没有给出任何要修改的字段' }
+        applyToolUpdate('courses', (items) => items.map((c) => (c.id === id ? { ...c, ...patch } : c)))
+        return { ok: true }
+      }
+      case 'delete_course': {
+        const id = str(args.id)
+        if (!d.courses.some((c) => c.id === id)) return { ok: false, error: `未找到课程 ${id}` }
+        applyToolUpdate('courses', (items) => items.filter((c) => c.id !== id))
         return { ok: true }
       }
       case 'create_habit': {
@@ -254,27 +344,58 @@ export default function AiPanel({
         onNavigate(view)
         return { ok: true }
       }
+      case 'query_stats': {
+        const scope = str(args.scope) as StatsScope
+        if (!['todos', 'habits', 'overview'].includes(scope))
+          return { ok: false, error: 'scope 需为 todos / habits / overview' }
+        const range = (str(args.range) || 'thisWeek') as StatsRange
+        if (!['today', 'thisWeek', 'lastWeek', 'last7d', 'month', 'all'].includes(range))
+          return { ok: false, error: 'range 需为 today/thisWeek/lastWeek/last7d/month/all' }
+        return { ok: true, ...queryStats(d, { scope, range }) }
+      }
+      case 'remember': {
+        const content = str(args.content)
+        if (!content) return { ok: false, error: 'content 为空' }
+        if (d.memories.some((m) => m.content === content)) return { ok: true, note: '这条已经在记忆里了' }
+        applyToolUpdate('memories', (items) => [
+          ...items,
+          { id: uid(), content: content.slice(0, 200), createdAt: nowIso() },
+        ])
+        return { ok: true }
+      }
+      case 'forget_memory': {
+        const id = str(args.id)
+        if (!d.memories.some((m) => m.id === id)) return { ok: false, error: `未找到记忆 ${id}` }
+        applyToolUpdate('memories', (items) => items.filter((m) => m.id !== id))
+        return { ok: true }
+      }
       default:
         return { ok: false, error: `未知工具 ${call.function.name}` }
     }
   }
 
-  // 一轮完整对话:请求 → (工具调用 → 本地执行 → 回传结果 → 再请求)×≤5 → 最终文本。
+  // 一轮完整对话:请求 → (工具调用 → 本地执行 → 回传结果 → 再请求)×≤8 → 最终文本。
   // 返回文本与整轮各次请求的 token 用量合计。
   const runTurn = async (
     userText: string,
+    sid: string,
     signal: AbortSignal,
   ): Promise<{ text: string; usage: ChatUsage | null }> => {
-    // 历史取已持久化的最近 12 条(此刻还不含刚发送的这条,稍后显式 push);
-    // 末尾若挂着没有回复的 user 消息(上一轮失败或中止留下的),先去掉,
+    // 历史取当前会话已持久化的最近 12 条(此刻刚发送的这条已在镜像里,靠去尾兜掉);
+    // 末尾若挂着没有回复的 user 消息(刚发送/上一轮失败留下的),先去掉,
     // 避免与本次新消息连成两条 user,部分严格的上游会拒绝
-    const persisted = dataRef.current.chats.slice(-12)
+    const sessionMsgs = dataRef.current.chats.filter((m) => m.sessionId === sid)
+    const persisted = sessionMsgs.slice(-CHAT_WINDOW)
     while (persisted.length > 0 && persisted[persisted.length - 1].role === 'user') persisted.pop()
     const history: UpstreamMessage[] = persisted.map((m) => ({ role: m.role, content: m.content }))
+    // 窗口外的更早消息已压缩成滚动摘要(存在会话上),拼在 system 后延续语境
+    const summaryBlock = dataRef.current.chatSessions.find((s) => s.id === sid)?.summary
+      ? `\n\n【此前对话摘要】\n${dataRef.current.chatSessions.find((s) => s.id === sid)!.summary}`
+      : ''
     // 工具快照从当前数据出发,本轮工具执行期间的变更会同步累积进去
     toolSnapshotRef.current = dataRef.current
     const messages: UpstreamMessage[] = [
-      { role: 'system', content: buildSystemPrompt(toolSnapshotRef.current) },
+      { role: 'system', content: buildSystemPrompt(toolSnapshotRef.current) + summaryBlock },
       ...history,
       { role: 'user', content: userText },
     ]
@@ -288,8 +409,13 @@ export default function AiPanel({
           }
         : { prompt: u.prompt_tokens, completion: u.completion_tokens, total: u.total_tokens }
     }
-    for (let round = 0; round < 5; round++) {
-      const res = await aiChat({ messages, tools: AI_TOOLS }, signal)
+    for (let round = 0; round < 8; round++) {
+      // 每轮开始清空流式缓冲;本轮的正文增量实时显示在气泡里
+      setStreamText('')
+      const res = await aiChatStream(
+        { messages, tools: AI_TOOLS },
+        { signal, onDelta: (d) => setStreamText((prev) => prev + d) },
+      )
       if (res.usage) addUsage(res.usage)
       const msg = res.message
       if (!msg) throw new Error('AI 没有返回内容')
@@ -306,32 +432,150 @@ export default function AiPanel({
           messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) })
         }
         // 本地数据已变,用最新快照重建 system,便于模型准确确认结果
-        messages[0] = { role: 'system', content: buildSystemPrompt(toolSnapshotRef.current ?? dataRef.current) }
+        messages[0] = {
+          role: 'system',
+          content: buildSystemPrompt(toolSnapshotRef.current ?? dataRef.current) + summaryBlock,
+        }
         setToolNote('正在整理结果…')
         continue
       }
       return { text: (msg.content || '').trim() || '(AI 没有返回内容)', usage }
     }
-    throw new Error('工具调用超过 5 轮,已中止')
+    throw new Error('工具调用超过 8 轮,已中止')
   }
 
-  const send = async () => {
-    const text = input.trim()
-    if (!text || busy) return
-    setInput('')
+  // 没有活跃会话时建一个;同步写进 dataRef 镜像,保证紧随其后的 runTurn 能读到
+  const ensureSession = (): string => {
+    if (activeSessionId) return activeSessionId
+    const s: ChatSession = { id: uid(), title: '', createdAt: nowIso(), updatedAt: nowIso() }
+    update('chatSessions', (items) => [...items, s])
+    dataRef.current = { ...dataRef.current, chatSessions: [...dataRef.current.chatSessions, s] }
+    setSessionId(s.id)
+    return s.id
+  }
+
+  // 新建会话(会话弹层入口):无论当前是否已有会话,都另起一个空会话并切过去
+  const newSession = () => {
+    if (busy) return
+    const s: ChatSession = { id: uid(), title: '', createdAt: nowIso(), updatedAt: nowIso() }
+    update('chatSessions', (items) => [...items, s])
+    dataRef.current = { ...dataRef.current, chatSessions: [...dataRef.current.chatSessions, s] }
+    setSessionId(s.id)
+    setSessOpen(false)
+  }
+
+  // 后台给无标题会话起名:用首轮问答生成短标题;失败静默保留占位标题
+  const autoTitle = (sid: string) => {
+    const d = dataRef.current
+    const s = d.chatSessions.find((x) => x.id === sid)
+    if (!s || s.title) return
+    const msgs = d.chats.filter((m) => m.sessionId === sid).slice(0, 4)
+    if (!msgs.length) return
+    void aiChat({
+      messages: [
+        {
+          role: 'system',
+          content:
+            '给下面这段对话起一个不超过 12 个字的标题,概括用户的核心意图。只输出标题本身,不要标点、引号或任何解释。',
+        },
+        {
+          role: 'user',
+          content: msgs.map((m) => `${m.role === 'user' ? '用户' : 'Miku'}:${m.content.slice(0, 200)}`).join('\n'),
+        },
+      ],
+    })
+      .then((res) => {
+        const t = res.message?.content
+          ?.trim()
+          .replace(/^["'「『#*\s]+|["'」』。.!!\s]+$/g, '')
+          .slice(0, 16)
+        if (!t) return
+        // 只在标题仍为空时写入,不覆盖用户手动改名
+        update('chatSessions', (items) => items.map((x) => (x.id === sid && !x.title ? { ...x, title: t } : x)))
+      })
+      .catch(() => {})
+  }
+
+  // 上下文压缩:窗口外未摘要的旧消息攒够 8 条时,后台把旧摘要与新消息滚动合并
+  const maybeSummarize = (sid: string) => {
+    const d = dataRef.current
+    const s = d.chatSessions.find((x) => x.id === sid)
+    const msgs = d.chats.filter((m) => m.sessionId === sid)
+    const older = msgs.slice(0, Math.max(msgs.length - CHAT_WINDOW, 0))
+    const unsummarized = older.filter((m) => !s?.summaryUntil || m.ts > s.summaryUntil)
+    if (unsummarized.length < 8) return
+    void (async () => {
+      try {
+        const res = await aiChat({
+          messages: [
+            {
+              role: 'system',
+              content:
+                '你在维护一段长期对话的滚动摘要。把已有摘要与新消息合并成一份不超过 300 字的摘要:保留用户的稳定偏好、目标、决定与重要事实,去掉寒暄和琐碎细节。只输出摘要正文,不要解释。',
+            },
+            {
+              role: 'user',
+              content: [
+                s?.summary ? `【已有摘要】\n${s.summary}\n` : '',
+                '【新消息】',
+                unsummarized
+                  .map((m) => `${m.role === 'user' ? '用户' : 'Miku'}:${m.content.slice(0, 300)}`)
+                  .join('\n'),
+              ]
+                .filter(Boolean)
+                .join('\n'),
+            },
+          ],
+        })
+        const text = res.message?.content?.trim()
+        if (!text) return
+        update('chatSessions', (items) =>
+          items.map((x) =>
+            x.id === sid
+              ? { ...x, summary: text.slice(0, 600), summaryUntil: unsummarized[unsummarized.length - 1].ts }
+              : x,
+          ),
+        )
+      } catch {
+        // 摘要失败保持安静,下轮满足条件时再试
+      }
+    })()
+  }
+
+  // 发送与「重新生成/重试」共用的一轮回复;persistUser=false 用于重跑已有提问
+  const runReply = async (userText: string, sid: string, persistUser: boolean) => {
     setError('')
-    update('chats', (items) => [...items, { id: uid(), role: 'user', content: text, ts: nowIso() }])
+    if (persistUser) {
+      const userMsg: ChatMsg = { id: uid(), role: 'user', content: userText, ts: nowIso(), sessionId: sid }
+      update('chats', (items) => [...items, userMsg])
+      // 镜像同步:紧随其后的 runTurn/autoTitle 都同步读 dataRef
+      dataRef.current = { ...dataRef.current, chats: [...dataRef.current.chats, userMsg] }
+    }
+    // 会话置为活跃;新会话还没有标题时,用首条提问截断占位
+    update('chatSessions', (items) =>
+      items.map((s) =>
+        s.id === sid
+          ? { ...s, updatedAt: nowIso(), title: s.title || (persistUser ? cutTitle(userText) : s.title) }
+          : s,
+      ),
+    )
     setBusy(true)
     // Miku 进入思考状态:慢速轻晃直到回复回来(未启用 Live2D 时无监听方,无副作用)
     window.dispatchEvent(new CustomEvent(MIKU_THINKING_EVENT, { detail: { on: true } }))
     const abort = new AbortController()
     abortRef.current = abort
     try {
-      const { text: reply, usage } = await runTurn(text, abort.signal)
-      update('chats', (items) => [
-        ...items,
-        { id: uid(), role: 'assistant', content: reply, ts: nowIso(), usage: usage ?? undefined },
-      ])
+      const { text: reply, usage } = await runTurn(userText, sid, abort.signal)
+      const replyMsg: ChatMsg = {
+        id: uid(),
+        role: 'assistant',
+        content: reply,
+        ts: nowIso(),
+        usage: usage ?? undefined,
+        sessionId: sid,
+      }
+      update('chats', (items) => [...items, replyMsg])
+      dataRef.current = { ...dataRef.current, chats: [...dataRef.current.chats, replyMsg] }
       // 让 Miku 悬浮球做个表情,并按回复长度开口念一会儿(未启用 Live2D 时无监听方,无副作用)
       window.dispatchEvent(new CustomEvent(MIKU_EXPRESS_EVENT))
       window.dispatchEvent(
@@ -339,22 +583,101 @@ export default function AiPanel({
       )
       // 气泡模式:回复已到,弹出气泡
       setQuickReplied(true)
+      autoTitle(sid)
+      maybeSummarize(sid)
     } catch (err) {
       if ((err as Error)?.name !== 'AbortError') setError((err as Error)?.message || '请求失败,请重试')
     } finally {
       abortRef.current = null
       setBusy(false)
       setToolNote('')
+      setStreamText('')
       window.dispatchEvent(new CustomEvent(MIKU_THINKING_EVENT, { detail: { on: false } }))
     }
   }
 
-  const clear = () => {
-    if (data.chats.length === 0) return
-    if (window.confirm('清空全部对话记录?')) update('chats', () => [])
+  const send = () => {
+    const text = input.trim()
+    if (!text || busy) return
+    setInput('')
+    void runReply(text, ensureSession(), true)
   }
 
-  const chats = data.chats
+  // 重新生成:撤掉最后一条 AI 回复,用同一句提问重跑
+  const regenerate = () => {
+    if (busy) return
+    const chatsNow = dataRef.current.chats
+    if (chatsNow.length === 0 || chatsNow[chatsNow.length - 1].role !== 'assistant') return
+    const lastUser = [...chatsNow].reverse().find((m) => m.role === 'user')
+    if (!lastUser) return
+    const sid = lastUser.sessionId ?? activeSessionId
+    const nextChats = chatsNow.slice(0, -1)
+    update('chats', () => nextChats)
+    // runTurn 同步读 dataRef:先把删除落进镜像,避免旧回复仍留在本轮历史里
+    dataRef.current = { ...dataRef.current, chats: nextChats }
+    setSessionId(sid)
+    void runReply(lastUser.content, sid, false)
+  }
+
+  // 失败重试:末尾挂着没得到回复的 user 消息时,重跑同一轮
+  const retry = () => {
+    if (busy) return
+    const chatsNow = dataRef.current.chats
+    const lastUser = [...chatsNow].reverse().find((m) => m.role === 'user')
+    if (!lastUser) return
+    const sid = lastUser.sessionId ?? activeSessionId
+    setSessionId(sid)
+    void runReply(lastUser.content, sid, false)
+  }
+
+  // 清空当前会话的消息(会话保留,摘要一并清除)
+  const clear = () => {
+    if (!activeSessionId) return
+    const cur = data.chats.filter((m) => m.sessionId === activeSessionId)
+    if (cur.length === 0) return
+    if (window.confirm('清空当前会话的对话记录?(会话保留)')) {
+      update('chats', (items) => items.filter((m) => m.sessionId !== activeSessionId))
+      update('chatSessions', (items) =>
+        items.map((s) => (s.id === activeSessionId ? { ...s, summary: undefined, summaryUntil: undefined } : s)),
+      )
+      dataRef.current = {
+        ...dataRef.current,
+        chats: dataRef.current.chats.filter((m) => m.sessionId !== activeSessionId),
+        chatSessions: dataRef.current.chatSessions.map((s) =>
+          s.id === activeSessionId ? { ...s, summary: undefined, summaryUntil: undefined } : s,
+        ),
+      }
+    }
+  }
+
+  // 删除整个会话(连同其消息)
+  const deleteSession = (sid: string) => {
+    if (busy) return
+    const count = data.chats.filter((m) => m.sessionId === sid).length
+    if (!window.confirm(`删除这个会话?(含 ${count} 条消息)`)) return
+    update('chatSessions', (items) => items.filter((s) => s.id !== sid))
+    update('chats', (items) => items.filter((m) => m.sessionId !== sid))
+    dataRef.current = {
+      ...dataRef.current,
+      chatSessions: dataRef.current.chatSessions.filter((s) => s.id !== sid),
+      chats: dataRef.current.chats.filter((m) => m.sessionId !== sid),
+    }
+    if (sid === activeSessionId) setSessionId('')
+  }
+
+  // 会话:sessionId 为空表示「跟随最近活跃」;列表按最近活跃在前
+  const sessionsSorted = useMemo(
+    () => [...data.chatSessions].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+    [data.chatSessions],
+  )
+  const activeSessionId = useMemo(
+    () => (sessionId && data.chatSessions.some((s) => s.id === sessionId) ? sessionId : (sessionsSorted[0]?.id ?? '')),
+    [sessionId, data.chatSessions, sessionsSorted],
+  )
+  const chats = useMemo(
+    () => data.chats.filter((m) => m.sessionId === activeSessionId),
+    [data.chats, activeSessionId],
+  )
   const configured = !!cfg && !!cfg.baseUrl && !!cfg.model && cfg.hasKey
 
   // 对话累计 token:所有持久化回复的 usage 之和
@@ -375,15 +698,18 @@ export default function AiPanel({
   )
   const lastUsage = useMemo(() => [...data.chats].reverse().find((m) => m.usage)?.usage, [data.chats])
 
-  // 点胶囊外其他位置时收起用量下拉
+  // 点弹层外其他位置时收起用量/记忆/会话下拉
   useEffect(() => {
-    if (!usageOpen) return
+    if (!usageOpen && !memOpen && !sessOpen) return
     const close = (e: MouseEvent) => {
-      if (!(e.target as HTMLElement).closest('.ai-model-wrap')) setUsageOpen(false)
+      const t = e.target as HTMLElement
+      if (!t.closest('.ai-model-wrap')) setUsageOpen(false)
+      if (!t.closest('.ai-mem-wrap')) setMemOpen(false)
+      if (!t.closest('.ai-sess-wrap')) setSessOpen(false)
     }
     document.addEventListener('mousedown', close)
     return () => document.removeEventListener('mousedown', close)
-  }, [usageOpen])
+  }, [usageOpen, memOpen, sessOpen])
 
   // 轻量气泡模式:悬浮球点击后的快速提问——不显示历史,只显示输入条,
   // 最新回复/工具进度/错误都以气泡形式浮在输入条上方,指向 Miku。
@@ -397,7 +723,19 @@ export default function AiPanel({
             className={`miku-bubble${error ? ' err' : ''}`}
             style={bubbleMaxHeight !== undefined ? { maxHeight: bubbleMaxHeight } : undefined}
           >
-            {busy ? toolNote || '思考中…' : error || lastAssistant?.content}
+            {busy ? (
+              streamText ? (
+                <MiniMarkdown text={streamText} />
+              ) : (
+                toolNote || '思考中…'
+              )
+            ) : error ? (
+              error
+            ) : lastAssistant ? (
+              <MiniMarkdown text={lastAssistant.content} />
+            ) : (
+              ''
+            )}
           </div>
         )}
         {!configured && (
@@ -485,6 +823,77 @@ export default function AiPanel({
               )}
             </div>
           )}
+          <div className="ai-sess-wrap">
+            <button
+              className="ai-head-btn"
+              onClick={() => setSessOpen((v) => !v)}
+              title="历史会话"
+            >
+              会话{sessionsSorted.length > 0 ? ` ${sessionsSorted.length}` : ''}
+            </button>
+            {sessOpen && (
+              <div className="ai-sess-pop">
+                <button className="ai-sess-new" onClick={newSession} disabled={busy}>
+                  ＋ 新对话
+                </button>
+                <div className="ai-sess-list">
+                  {sessionsSorted.map((s) => {
+                    const count = data.chats.filter((m) => m.sessionId === s.id).length
+                    return (
+                      <div key={s.id} className={`ai-sess-row ${s.id === activeSessionId ? 'on' : ''}`}>
+                        <button
+                          className="ai-sess-main"
+                          disabled={busy}
+                          onClick={() => {
+                            setSessionId(s.id)
+                            setSessOpen(false)
+                          }}
+                        >
+                          <span className="ai-sess-title">{s.title || '未命名对话'}</span>
+                          <span className="ai-sess-meta">{count > 0 ? `${count} 条` : '空'}</span>
+                        </button>
+                        <button
+                          className="ai-sess-del"
+                          title="删除此会话"
+                          disabled={busy}
+                          onClick={() => deleteSession(s.id)}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    )
+                  })}
+                  {sessionsSorted.length === 0 && <div className="ai-sess-empty">还没有对话</div>}
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="ai-mem-wrap">
+            <button className="ai-head-btn" onClick={() => setMemOpen((v) => !v)}>
+              记忆{data.memories.length > 0 ? ` ${data.memories.length}` : ''}
+            </button>
+            {memOpen && (
+              <div className="ai-mem-pop">
+                <div className="ai-mem-title">长期记忆</div>
+                {data.memories.length === 0 ? (
+                  <div className="ai-mem-empty">还没有记忆。聊天时告诉 Miku 你的偏好、目标或背景,它会记在这里。</div>
+                ) : (
+                  data.memories.map((m) => (
+                    <div key={m.id} className="ai-mem-row">
+                      <span className="ai-mem-text">{m.content}</span>
+                      <button
+                        className="ai-mem-del"
+                        title="删除这条记忆"
+                        onClick={() => update('memories', (items) => items.filter((x) => x.id !== m.id))}
+                      >
+                        删
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
           <button className="ai-head-btn" onClick={clear} title="清空对话记录">
             清空
           </button>
@@ -513,19 +922,32 @@ export default function AiPanel({
         )}
         {chats.map((m) => (
           <div key={m.id} className={`ai-msg ${m.role}`}>
-            <div className="ai-bubble">{m.content}</div>
+            <div className="ai-bubble">{m.role === 'assistant' ? <MiniMarkdown text={m.content} /> : m.content}</div>
           </div>
         ))}
         {busy && (
           <div className="ai-msg assistant">
             <div className="ai-bubble ai-typing">
-              <span className="ai-dots">
-                <i />
-                <i />
-                <i />
-              </span>
-              {toolNote || '思考中…'}
+              {streamText ? (
+                <MiniMarkdown text={streamText} />
+              ) : (
+                <>
+                  <span className="ai-dots">
+                    <i />
+                    <i />
+                    <i />
+                  </span>
+                  {toolNote || '思考中…'}
+                </>
+              )}
             </div>
+          </div>
+        )}
+        {!busy && chats.length > 0 && chats[chats.length - 1].role === 'assistant' && (
+          <div className="ai-msg assistant">
+            <button className="ai-regen" onClick={regenerate} title="撤掉这条回复,重新作答">
+              ↺ 重新生成
+            </button>
           </div>
         )}
       </div>
@@ -533,6 +955,9 @@ export default function AiPanel({
       {error && (
         <div className="ai-error">
           <span>{error}</span>
+          {chats.length > 0 && chats[chats.length - 1].role === 'user' && (
+            <button onClick={retry}>重试</button>
+          )}
           <button onClick={() => setError('')}>知道了</button>
         </div>
       )}

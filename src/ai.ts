@@ -74,6 +74,115 @@ export function aiChat(
   return aiReq('/api/ai/chat', body, 'POST', signal)
 }
 
+export interface StreamTurnResult {
+  message: UpstreamMessage | null
+  usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null
+}
+
+export interface StreamTurnOptions {
+  /** 每来一段正文增量就回调一次(工具调用分片不回调,由聚合器累积) */
+  onDelta?: (text: string) => void
+  signal?: AbortSignal
+}
+
+/**
+ * 流式聊天:请求走 SSE,增量解析 OpenAI 兼容的 chunk 流。
+ * - 正文分片实时回调 onDelta;
+ * - tool_calls 分片按 index 累积(id/name/arguments 拼接),结束时与 aiChat 同构地返回完整 message;
+ * - 服务端在 stream 模式下若上游出错,仍返回 JSON(非 200),所以先看 response.ok 再按 SSE 解析;
+ * - 不传 stream_options(部分兼容端点不认),usage 可能缺失,调用方需容忍。
+ */
+export async function aiChatStream(
+  body: { messages: UpstreamMessage[]; tools?: unknown[] },
+  { onDelta, signal }: StreamTurnOptions = {},
+): Promise<StreamTurnResult> {
+  const res = await fetch('/api/ai/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...body, stream: true }),
+    signal,
+  })
+  if (!res.ok) {
+    const data = (await res.json().catch(() => null)) as { message?: string } | null
+    throw new Error(data?.message || `${res.status} ${res.statusText}`)
+  }
+  if (!res.body) throw new Error('当前环境不支持流式响应')
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  let content = ''
+  let done0 = false
+  let usage: StreamTurnResult['usage'] = null
+  const toolCalls: ToolCall[] = []
+
+  const handleLine = (line: string) => {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith('data:')) return
+    const data = trimmed.slice(5).trim()
+    if (!data || data === '[DONE]') {
+      if (data === '[DONE]') done0 = true
+      return
+    }
+    let json: {
+      usage?: NonNullable<StreamTurnResult['usage']>
+      choices?: { delta?: { content?: string | null; tool_calls?: unknown[] } }[]
+    }
+    try {
+      json = JSON.parse(data)
+    } catch {
+      return // 心跳/注释行,忽略
+    }
+    if (json.usage) usage = json.usage
+    const delta = json.choices?.[0]?.delta
+    if (delta?.content) {
+      content += delta.content
+      onDelta?.(delta.content)
+    }
+    const tcd = delta?.tool_calls
+    if (Array.isArray(tcd)) {
+      for (const raw of tcd) {
+        const tc = raw as {
+          index?: number
+          id?: string
+          function?: { name?: string; arguments?: string }
+        }
+        const i = typeof tc.index === 'number' ? tc.index : toolCalls.length
+        while (toolCalls.length <= i) {
+          toolCalls.push({ id: '', type: 'function', function: { name: '', arguments: '' } })
+        }
+        const slot = toolCalls[i]
+        if (tc.id) slot.id = tc.id
+        if (tc.function?.name) slot.function.name += tc.function.name
+        if (tc.function?.arguments) slot.function.arguments += tc.function.arguments
+      }
+    }
+  }
+
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    let nl: number
+    while ((nl = buf.indexOf('\n')) !== -1) {
+      const line = buf.slice(0, nl)
+      buf = buf.slice(nl + 1)
+      handleLine(line)
+      if (done0) break
+    }
+    if (done0) break
+  }
+  // 流意外截断时冲出解码器余量,残余半行尽量解析
+  buf += decoder.decode()
+  if (!done0 && buf) handleLine(buf)
+
+  const message: UpstreamMessage | null = toolCalls.length
+    ? { role: 'assistant', content: content || null, tool_calls: toolCalls }
+    : content
+      ? { role: 'assistant', content }
+      : null
+  return { message, usage }
+}
+
 // ---------- 工具定义(前端执行) ----------
 
 const fn = (
@@ -90,6 +199,32 @@ export const AI_TOOLS = [
       title: { type: 'string', description: '任务内容' },
       dueDate: { type: 'string', description: '截止日期 YYYY-MM-DD,可选' },
     }, ['title']),
+  },
+  {
+    type: 'function',
+    function: fn('add_todos', '批量新建多条待办:把一个目标拆解成多个步骤时,一次调用建完,不要循环调用 add_todo', {
+      items: {
+        type: 'array',
+        description: '待办列表,按执行顺序排列',
+        items: {
+          type: 'object',
+          properties: {
+            title: { type: 'string', description: '任务内容' },
+            dueDate: { type: 'string', description: '截止日期 YYYY-MM-DD,可选' },
+          },
+          required: ['title'],
+        },
+      },
+    }, ['items']),
+  },
+  {
+    type: 'function',
+    function: fn('update_todo', '编辑一条已有待办(改标题/截止日/完成状态),至少给一个要改的字段', {
+      id: { type: 'string', description: '待办 id,来自数据快照' },
+      title: { type: 'string', description: '新标题,不改就不传' },
+      dueDate: { type: 'string', description: '新截止日期 YYYY-MM-DD;传空字符串表示清除截止日' },
+      done: { type: 'boolean', description: '完成状态, true=完成 false=重开' },
+    }, ['id']),
   },
   {
     type: 'function',
@@ -113,6 +248,24 @@ export const AI_TOOLS = [
       location: { type: 'string', description: '上课地点,可选' },
       teacher: { type: 'string', description: '老师姓名,可选' },
     }, ['name', 'weekday', 'start', 'end']),
+  },
+  {
+    type: 'function',
+    function: fn('update_course', '编辑一门已有课程(改课名/时间/地点/老师),至少给一个要改的字段', {
+      id: { type: 'string', description: '课程 id,来自数据快照' },
+      name: { type: 'string', description: '课程名,不改就不传' },
+      weekday: { type: 'integer', description: '星期,1=周一 … 7=周日' },
+      start: { type: 'string', description: '开始时间 HH:mm' },
+      end: { type: 'string', description: '结束时间 HH:mm' },
+      location: { type: 'string', description: '上课地点;传空字符串表示清除' },
+      teacher: { type: 'string', description: '老师姓名;传空字符串表示清除' },
+    }, ['id']),
+  },
+  {
+    type: 'function',
+    function: fn('delete_course', '从课表里删除一门课程', {
+      id: { type: 'string', description: '课程 id,来自数据快照' },
+    }, ['id']),
   },
   {
     type: 'function',
@@ -178,6 +331,43 @@ export const AI_TOOLS = [
         description: '目标页面;raise 是 Miku 养成页(互动/喂食/聊天),notes 是随手记(AI 日报/周报)',
       },
     }, ['view']),
+  },
+  {
+    type: 'function',
+    function: fn(
+      'query_stats',
+      '查询统计数据:待办完成/新建/逾期明细、习惯打卡次数与按日分布、今日课程与提醒概况。统计类问题必须用它查,不要靠数快照估算',
+      {
+        scope: {
+          type: 'string',
+          enum: ['todos', 'habits', 'overview'],
+          description: 'todos=待办,habits=习惯打卡,overview=两者加今日课表与提醒概况',
+        },
+        range: {
+          type: 'string',
+          enum: ['today', 'thisWeek', 'lastWeek', 'last7d', 'month', 'all'],
+          description: '统计范围,缺省 thisWeek(本周)',
+        },
+      },
+      ['scope'],
+    ),
+  },
+  {
+    type: 'function',
+    function: fn(
+      'remember',
+      '把用户的长期信息存入记忆:稳定偏好、长期目标、个人背景(如「偏好番茄工作法」「考研目标 12 月」「对花生过敏」)。一次性的临时琐事不要存',
+      {
+        content: { type: 'string', description: '要记住的内容,一句话,保留用户原意' },
+      },
+      ['content'],
+    ),
+  },
+  {
+    type: 'function',
+    function: fn('forget_memory', '删除一条长期记忆(用户要求忘记某事,或该记忆已过时)', {
+      id: { type: 'string', description: '记忆 id,来自数据快照' },
+    }, ['id']),
   },
 ]
 
@@ -245,11 +435,18 @@ export function buildDataSnapshot(data: AppData): string {
   const noteDates = data.notes.map((n) => n.date).sort()
   const dailyN = data.reports.filter((r) => r.kind === 'daily').length
   const weeklyN = data.reports.filter((r) => r.kind === 'weekly').length
+  const monthlyN = data.reports.filter((r) => r.kind === 'monthly').length
   lines.push(
     `[随手记] 共 ${data.notes.length} 条${
       noteDates.length ? `(最早 ${noteDates[0]},最近 ${noteDates[noteDates.length - 1]})` : ''
-    };已生成日报 ${dailyN} 篇、周报 ${weeklyN} 篇(正文可用工具读取)`,
+    };已生成日报 ${dailyN} 篇、周报 ${weeklyN} 篇、月报 ${monthlyN} 篇(正文可用工具读取)`,
   )
+
+  lines.push('')
+  lines.push(`[长期记忆] 共 ${data.memories.length} 条`)
+  for (const m of data.memories) {
+    lines.push(`- id:${m.id} ${cut(m.content, 80)}`)
+  }
 
   return lines.join('\n')
 }
@@ -262,6 +459,9 @@ export function buildSystemPrompt(data: AppData): string {
     `你是「个人工作台」(一个本地个人效率工具,含待办/课表/习惯打卡/定时提醒)里的助手 Miku。今天是 ${today} 星期${WEEKDAYS[now.getDay()]},现在时刻 ${hm}。`,
     '下面是用户的实时数据快照。回答数据相关问题时以快照为准;用户要求修改数据时调用工具完成,不要编造 id,只用快照里出现的 id。',
     '快照不含随手记和日报/周报的正文;用户问起过往的记录时,用 search_notes / read_daily_report / read_weekly_report 工具查询后如实回答,查不到就说没有,不要编造。',
+    '统计类问题(完成了多少、打卡几次、逾期有哪些)用 query_stats 查询,不要靠数快照估算。',
+    '编辑已有待办/课程用 update_todo / update_course;用户给出一个目标时,用 add_todos 一次拆解成多条待办(可带截止日)。',
+    '用户表达稳定偏好、长期目标或个人背景时,用 remember 存入长期记忆;一次性的临时琐事不要存。用户要求忘记某事或记忆已过时,用 forget_memory 删除对应条目。',
     '修改完成后用一句话向用户确认;闲聊与问答保持简洁,全程使用中文。',
     '',
     buildDataSnapshot(data),
@@ -270,22 +470,40 @@ export function buildSystemPrompt(data: AppData): string {
 
 // ---------- 主动巡查:自动读取待办/习惯/课表并生成提醒 ----------
 
-/** 组装主动巡查的一次性消息(无工具调用),让模型挑出此刻值得提醒的事项 */
-export function buildBriefingMessages(data: AppData): UpstreamMessage[] {
+/** 组装主动巡查的一次性消息(无工具调用),让模型挑出此刻值得提醒的事项。
+ * dismissed 用于告知用户最近已经知道的内容,避免反复提醒同一件事 */
+export function buildBriefingMessages(data: AppData, opts?: { dismissed?: string[] }): UpstreamMessage[] {
   const now = new Date()
   const hm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+  const today = todayStr(now)
+  // 近期完成节奏:让模型知道今天是忙是闲,提醒更有分寸
+  const doneToday = data.todos.filter((t) => t.done && t.completedAt && todayStr(new Date(t.completedAt)) === today).length
+  const weekAgo = new Date(now)
+  weekAgo.setDate(weekAgo.getDate() - 6)
+  const weekAgoStr = todayStr(weekAgo)
+  const done7d = data.todos.filter(
+    (t) => t.done && t.completedAt && todayStr(new Date(t.completedAt)) >= weekAgoStr,
+  ).length
+  const pace = `近期节奏:今日已完成待办 ${doneToday} 条,近 7 天完成 ${done7d} 条。`
+  const dismissedNote = opts?.dismissed?.length
+    ? `用户最近已经知晓以下提醒,除非情况有变化(如临近、逾期),否则不要重复:\n${opts.dismissed
+        .slice(-10)
+        .map((l) => `- ${l}`)
+        .join('\n')}\n`
+    : ''
   return [
     {
       role: 'system',
       content:
         '你是「个人工作台」的主动提醒引擎。根据数据快照与当前时刻,找出此刻最值得提醒用户的事项:' +
         '已逾期或今天/明天截止的未完成待办、今天还没打卡的习惯、今天剩余的课(一小时内要上的优先)。' +
+        '结合用户的长期记忆与近期完成节奏判断轻重,优先提醒新变化和真正要紧的事。' +
         '最多 4 条,每条一行、以「·」开头,一行只说一件事,写明时间/课名/习惯名,简洁具体;' +
         '不要寒暄、不要解释、不要 markdown。若没有值得提醒的,只输出:无',
     },
     {
       role: 'user',
-      content: `现在是 ${todayStr(now)} 星期${WEEKDAYS[now.getDay()]} ${hm}。数据快照如下:\n\n${buildDataSnapshot(data)}\n\n请给出此刻的提醒。`,
+      content: `现在是 ${today} 星期${WEEKDAYS[now.getDay()]} ${hm}。${pace}\n\n${dismissedNote}数据快照如下:\n\n${buildDataSnapshot(data)}\n\n请给出此刻的提醒。`,
     },
   ]
 }
@@ -308,8 +526,11 @@ export function parseBriefing(text: string): string[] {
 }
 
 /** 调一次 AI 生成巡查提醒;失败由调用方决定如何处理 */
-export async function fetchAiBriefing(data: AppData, signal?: AbortSignal): Promise<string[]> {
-  const res = await aiChat({ messages: buildBriefingMessages(data) }, signal)
+export async function fetchAiBriefing(
+  data: AppData,
+  opts?: { signal?: AbortSignal; dismissed?: string[] },
+): Promise<string[]> {
+  const res = await aiChat({ messages: buildBriefingMessages(data, { dismissed: opts?.dismissed }) }, opts?.signal)
   const msg = res.message
   if (!msg?.content) throw new Error('AI 没有返回内容')
   return parseBriefing(msg.content)
@@ -422,6 +643,44 @@ export function buildWeeklyReportMessages({ weekKey, start, end, source }: Weekl
   ]
 }
 
+export interface MonthlyReportArgs {
+  /** 月份标识 YYYY-MM */
+  monthKey: string
+  start: string
+  end: string
+  /** 该月覆盖的各周周报(缺周报时按日汇总)拼成的来源 markdown */
+  source: string
+}
+
+export function buildMonthlyReportMessages({ monthKey, start, end, source }: MonthlyReportArgs): UpstreamMessage[] {
+  return [
+    {
+      role: 'system',
+      content: [
+        '你是「个人工作台」的月报整理助手。基于用户一个月的周报,写一篇有重点、可直接留存的月报 markdown。',
+        '写作要求:',
+        '1. 保留来源中的事实,不编造没有依据的成果、风险或计划。',
+        '2. 月报要有月度视角:提炼贯穿整月的主线、阶段性成果、遗留问题与下月展望,不要按周机械罗列。',
+        '3. 不套固定栏目,按材料自由组织:可用标题、段落、列表和小结。',
+        '4. 语气自然克制,像认真复盘的人写的月报,不要 AI 模板腔,不要寒暄和解释。',
+        `5. 全文第一行固定为一级标题 \`# ${monthKey} 月报\`,不得自拟、追加或省略。`,
+        '6. 只输出最终 markdown。',
+      ].join('\n'),
+    },
+    {
+      role: 'user',
+      content: [
+        `周期:${monthKey}(${start} ~ ${end})`,
+        '',
+        '【本月周报】',
+        source,
+        '',
+        '请写这个月的月报。',
+      ].join('\n'),
+    },
+  ]
+}
+
 async function generateMarkdown(
   messages: UpstreamMessage[],
   signal?: AbortSignal,
@@ -445,4 +704,9 @@ export function generateDailyReport(args: DailyMergeArgs, signal?: AbortSignal) 
 /** 调 AI 依据一周日报写周报;失败抛错 */
 export function generateWeeklyReport(args: WeeklyReportArgs, signal?: AbortSignal) {
   return generateMarkdown(buildWeeklyReportMessages(args), signal)
+}
+
+/** 调 AI 依据一个月周报写月报;失败抛错 */
+export function generateMonthlyReport(args: MonthlyReportArgs, signal?: AbortSignal) {
+  return generateMarkdown(buildMonthlyReportMessages(args), signal)
 }

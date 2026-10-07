@@ -1,6 +1,16 @@
-import type { AppData } from './types'
+import type { AppData, ChatSession } from './types'
 
-export type CollectionKey = 'todos' | 'courses' | 'habits' | 'chats' | 'links' | 'reminders' | 'notes' | 'reports'
+export type CollectionKey =
+  | 'todos'
+  | 'courses'
+  | 'habits'
+  | 'chats'
+  | 'chatSessions'
+  | 'links'
+  | 'reminders'
+  | 'notes'
+  | 'reports'
+  | 'memories'
 
 /** 带 HTTP 状态码的错误:401 表示未登录/会话过期,调用方据此回到登录页 */
 export class ApiError extends Error {
@@ -89,6 +99,49 @@ export async function saveSettings(patch: Record<string, unknown>, keepalive = f
 
 export function loadAll(): Promise<AppData> {
   return req('/api/data')
+    .then((data) => normalizeAppData(data as Partial<AppData>))
+    .then(migrateLegacyChats)
+}
+
+/** 老备份/旧服务端可能缺新集合,统一补齐空数组,下游不用判空 */
+function normalizeAppData(data: Partial<AppData>): AppData {
+  const keys: CollectionKey[] = [
+    'todos',
+    'courses',
+    'habits',
+    'chats',
+    'chatSessions',
+    'links',
+    'reminders',
+    'notes',
+    'reports',
+    'memories',
+  ]
+  const out = {} as AppData
+  const target = out as unknown as Record<CollectionKey, unknown[]>
+  for (const k of keys) {
+    const v = data?.[k]
+    target[k] = Array.isArray(v) ? v : []
+  }
+  return out
+}
+
+/** 一次性迁移:多会话上线前的旧聊天没有 sessionId,归入一个「历史对话」会话(幂等) */
+export function migrateLegacyChats(data: AppData): AppData {
+  if (!data.chats.some((m) => !m.sessionId)) return data
+  const sid = uid()
+  const legacy = data.chats.filter((m) => !m.sessionId)
+  const session: ChatSession = {
+    id: sid,
+    title: '历史对话',
+    createdAt: legacy[0]?.ts ?? new Date().toISOString(),
+    updatedAt: legacy[legacy.length - 1]?.ts ?? new Date().toISOString(),
+  }
+  return {
+    ...data,
+    chatSessions: [session, ...data.chatSessions],
+    chats: data.chats.map((m) => (m.sessionId ? m : { ...m, sessionId: sid })),
+  }
 }
 
 export function saveCollection<K extends CollectionKey>(

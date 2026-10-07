@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AppData } from '../types'
+import type { UpdateFn } from '../App'
 import { todayStr } from '../api'
+import { isoWeekKey } from '../notesOrg'
 import { aiChat, buildReportMessages, loadAiConfig, type AiConfigInfo } from '../ai'
 
 // 周一起始,与日历面板一致
@@ -60,7 +62,7 @@ function buildStats(data: AppData, week: WeekRange) {
   return { today, habitRows, habitDone, habitTotal, habitPerDay, habitDays, doneWeek, createdWeek, overdue }
 }
 
-export default function ReportPanel({ data }: { data: AppData }) {
+export default function ReportPanel({ data, update }: { data: AppData; update: UpdateFn }) {
   const [offset, setOffset] = useState(0)
   const week = useMemo(() => weekRange(offset), [offset])
   const stats = useMemo(() => buildStats(data, week), [data, week])
@@ -71,6 +73,12 @@ export default function ReportPanel({ data }: { data: AppData }) {
   const [copied, setCopied] = useState(false)
   const [aiBusy, setAiBusy] = useState(false)
   const [aiError, setAiError] = useState('')
+  // 周报在 reports 集合里以 ISO 周键存取;点评随 GenReport 落库,刷新/切周不丢
+  const weekKey = useMemo(() => isoWeekKey(week.start), [week])
+  const savedComment = useMemo(
+    () => data.reports.find((r) => r.kind === 'weekly' && r.id === weekKey)?.comment ?? '',
+    [data.reports, weekKey],
+  )
 
   useEffect(() => {
     loadAiConfig()
@@ -78,11 +86,11 @@ export default function ReportPanel({ data }: { data: AppData }) {
       .catch(() => setCfg(null))
   }, [])
 
-  // 切换周时清空上一周的点评
+  // 切周(或周报数据变化)时,从已落库的点评恢复
   useEffect(() => {
-    setComment('')
+    setComment(savedComment)
     setAiError('')
-  }, [offset])
+  }, [savedComment])
 
   const configured = !!cfg && !!cfg.baseUrl && !!cfg.model && cfg.hasKey
 
@@ -135,6 +143,10 @@ export default function ReportPanel({ data }: { data: AppData }) {
       const text = res.message?.content?.trim()
       if (!text) throw new Error('AI 没有返回内容')
       setComment(text)
+      // 点评写回对应周报;该周还没有周报 GenReport 时无处可写,保持会话内展示
+      update('reports', (items) =>
+        items.map((r) => (r.kind === 'weekly' && r.id === weekKey ? { ...r, comment: text } : r)),
+      )
     } catch (err) {
       setAiError((err as Error)?.message || '请求失败,请重试')
     } finally {

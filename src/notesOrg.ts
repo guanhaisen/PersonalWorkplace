@@ -6,7 +6,7 @@ import { useCallback, useRef, useState, type Dispatch, type SetStateAction } fro
 import type { AppData, GenReport, NoteEntry } from './types'
 import { todayStr, uid } from './api'
 import type { UpdateFn } from './App'
-import { generateDailyReport, generateWeeklyReport, loadAiConfig, type AiConfigInfo } from './ai'
+import { generateDailyReport, generateMonthlyReport, generateWeeklyReport, loadAiConfig, type AiConfigInfo } from './ai'
 
 const WEEKDAY_CN = ['日', '一', '二', '三', '四', '五', '六']
 const pad2 = (n: number) => String(n).padStart(2, '0')
@@ -58,6 +58,16 @@ export function weekKeyToDays(key: string): string[] {
   })
 }
 
+/** 本地日期串 → 月份标识 YYYY-MM */
+export const monthKeyOf = (dateStr: string) => dateStr.slice(0, 7)
+
+/** 月份标识 YYYY-MM → 该月 1 日与最后一天(YYYY-MM-DD) */
+export function monthBounds(monthKey: string): { start: string; end: string } {
+  const [y, m] = monthKey.split('-').map(Number)
+  const endD = new Date(y || 1970, m || 1, 0)
+  return { start: `${monthKey}-01`, end: `${monthKey}-${pad2(endD.getDate())}` }
+}
+
 export const weekdayCn = (dateStr: string) => WEEKDAY_CN[parseLocalDate(dateStr).getDay()]
 
 const hhmm = (iso: string): string => {
@@ -85,6 +95,37 @@ export function buildWeeklySource(data: AppData, days: string[]): string {
     let body = report?.content.trim() || ''
     if (!body && dayEntries.length) body = buildFallbackDaily(date, dayEntries)
     if (body) sections.push(`## ${date} 日报\n\n${body}`)
+  }
+  return sections.join('\n\n')
+}
+
+/** 月报来源:该月覆盖到的每一周,优先用周报;缺周报的周用落在本月内的日报/随手记兜底 */
+export function buildMonthlySource(data: AppData, monthKey: string): string {
+  const { start, end } = monthBounds(monthKey)
+  const seenWeeks = new Set<string>()
+  const sections: string[] = []
+  for (const d = parseLocalDate(start); ; d.setDate(d.getDate() + 1)) {
+    const date = todayStr(d)
+    if (date > end) break
+    const wk = isoWeekKey(date)
+    if (seenWeeks.has(wk)) continue
+    seenWeeks.add(wk)
+    const weekly = data.reports.find((r) => r.kind === 'weekly' && r.id === wk)
+    if (weekly?.content.trim()) {
+      sections.push(`## ${wk} 周报\n\n${weekly.content.trim()}`)
+      continue
+    }
+    // 该周缺周报:只取落在本月内的日子,避免把相邻月的内容混进来
+    const inMonth = weekKeyToDays(wk).filter((x) => x >= start && x <= end)
+    const parts: string[] = []
+    for (const day of inMonth) {
+      const rep = data.reports.find((r) => r.kind === 'daily' && r.id === day)
+      const entries = data.notes.filter((n) => n.date === day).sort((a, b) => a.ts.localeCompare(b.ts))
+      let body = rep?.content.trim() || ''
+      if (!body && entries.length) body = buildFallbackDaily(day, entries)
+      if (body) parts.push(`### ${day}\n\n${body}`)
+    }
+    if (parts.length) sections.push(`## ${wk}(无周报,按日汇总)\n\n${parts.join('\n\n')}`)
   }
   return sections.join('\n\n')
 }
@@ -155,10 +196,16 @@ export interface NotesOrg {
   generateWeekly: (weekKey: string, force?: boolean) => Promise<void>
   /** 补齐所有缺失的历史周报(从近到远,串行);本会话已尝试失败的周可 force 重试 */
   backfillWeeks: (force?: boolean) => Promise<void>
+  /** 手动生成/重新生成某月月报(源为该月各周周报);AI 失败会抛错 */
+  generateMonthly: (monthKey: string, force?: boolean) => Promise<void>
+  /** 补齐所有缺失的历史月报(从近到远,串行) */
+  backfillMonths: (force?: boolean) => Promise<void>
   /** 正在整理日报的日期集合 */
   merging: Record<string, true>
   /** 正在生成周报的周 key 集合 */
   generating: Record<string, true>
+  /** 正在生成月报的月 key 集合 */
+  generatingMonths: Record<string, true>
   /** AI 是否可用(未配置时直接走本地合并,不发无效请求) */
   aiUsable: boolean
 }
@@ -172,12 +219,14 @@ export function useNotesOrg(data: AppData | null, update: UpdateFn): NotesOrg {
 
   const [merging, setMerging] = useState<Record<string, true>>({})
   const [generating, setGenerating] = useState<Record<string, true>>({})
+  const [generatingMonths, setGeneratingMonths] = useState<Record<string, true>>({})
   const [aiUsable, setAiUsable] = useState(false)
   // 本会话已自动尝试过的周(成功或失败都记,防止失败循环重试);force 路径不受限
   const attemptedWeeks = useRef<Set<string>>(new Set())
-  // 同一天 / 周报生成的串行链:前一次 AI 写回后,后一次才能读到最新报告
+  // 同一天 / 周报 / 月报生成的串行链:前一次 AI 写回后,后一次才能读到最新报告
   const dayChains = useRef<Map<string, Promise<void>>>(new Map())
   const weekChain = useRef<Promise<void>>(Promise.resolve())
+  const monthChain = useRef<Promise<void>>(Promise.resolve())
   // 编排器在 App 层持有,跨账号存活:数据从无到有(登录/换号)时清空上个会话期的状态
   const hadDataRef = useRef(false)
   if (!data) {
@@ -187,6 +236,7 @@ export function useNotesOrg(data: AppData | null, update: UpdateFn): NotesOrg {
     attemptedWeeks.current.clear()
     dayChains.current.clear()
     weekChain.current = Promise.resolve()
+    monthChain.current = Promise.resolve()
   }
 
   const upsertReport = useCallback(
@@ -358,6 +408,65 @@ export function useNotesOrg(data: AppData | null, update: UpdateFn): NotesOrg {
     [checkAi, generateWeeklyRun],
   )
 
+  /** 生成某月月报:把该月覆盖的各周周报(缺则按日兜底)喂给 AI;失败抛错供界面提示 */
+  const generateMonthlyRun = useCallback(
+    async (monthKey: string, force: boolean) => {
+      const d = dataRef.current
+      if (!d) return
+      const existing = d.reports.find((r) => r.kind === 'monthly' && r.id === monthKey)
+      if (existing?.content.trim() && !force) return
+      const { start, end } = monthBounds(monthKey)
+      const source = buildMonthlySource(d, monthKey)
+      if (!source.trim()) return
+      markBusy(setGeneratingMonths, monthKey, true)
+      try {
+        const cfg = await checkAi()
+        if (!cfg) throw new Error('未配置 AI')
+        const { text, usage } = await generateMonthlyReport({ monthKey, start, end, source })
+        upsertReport({ id: monthKey, kind: 'monthly', content: text, ai: true, updatedAt: nowIso(), usage })
+      } finally {
+        markBusy(setGeneratingMonths, monthKey, false)
+      }
+    },
+    [checkAi, upsertReport],
+  )
+
+  const generateMonthly = useCallback(
+    (monthKey: string, force = false) => {
+      const prev = monthChain.current
+      const run = prev.then(() => generateMonthlyRun(monthKey, force))
+      // 失败不吞:手动调用方要 catch 弹提示;链上吞掉,避免断掉后续排队的月
+      monthChain.current = run.catch(() => {})
+      return run
+    },
+    [generateMonthlyRun],
+  )
+
+  const backfillMonths = useCallback(
+    (force = false) => {
+      const run = monthChain.current.then(async () => {
+        const d = dataRef.current
+        if (!d) return
+        const cfg = await checkAi()
+        if (!cfg) return
+        const currentKey = monthKeyOf(todayStr())
+        const touched = new Set<string>()
+        for (const r of d.reports) if (r.kind === 'weekly') touched.add(monthKeyOf(weekKeyToDays(r.id)[0]))
+        for (const n of d.notes) touched.add(monthKeyOf(n.date))
+        // 字典序即时间序(YYYY-MM 补零),从近到远补;当月不自动生成(还在进行中)
+        const months = [...touched].filter((k) => k < currentKey).sort().reverse()
+        for (const k of months) {
+          const has = d.reports.some((r) => r.kind === 'monthly' && r.id === k && r.content.trim())
+          if (has) continue
+          await generateMonthlyRun(k, force).catch(() => {})
+        }
+      })
+      monthChain.current = run.catch(() => {})
+      return run
+    },
+    [checkAi, generateMonthlyRun],
+  )
+
   const submitNote = useCallback(
     (content: string) => {
       const text = content.trim()
@@ -385,5 +494,17 @@ export function useNotesOrg(data: AppData | null, update: UpdateFn): NotesOrg {
     [update, upsertReport],
   )
 
-  return { submitNote, deleteNote, mergeDaily, generateWeekly, backfillWeeks, merging, generating, aiUsable }
+  return {
+    submitNote,
+    deleteNote,
+    mergeDaily,
+    generateWeekly,
+    backfillWeeks,
+    generateMonthly,
+    backfillMonths,
+    merging,
+    generating,
+    generatingMonths,
+    aiUsable,
+  }
 }

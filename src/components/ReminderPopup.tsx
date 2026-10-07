@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AppData } from '../types'
 import type { UpdateFn } from '../App'
-import { formatLocal, nowLocalStr, todayStr } from '../api'
+import { formatLocal, getSettings, nowLocalStr, saveSettings, todayStr } from '../api'
 import { fetchAiBriefing, loadAiConfig, type AiConfigInfo } from '../ai'
 import { IconAi } from './icons'
 
@@ -11,6 +11,13 @@ interface Props {
 }
 
 type Pos = { right: number; bottom: number }
+
+/** 巡查状态的服务端存档(settings.aiBriefing):刷新/换设备后恢复,「知道了」跨会话去重 */
+interface BriefingSave {
+  lines: string[]
+  dismissed: string[]
+  ts: string
+}
 
 const GAP = 12
 const BRIEFING_GAP_MS = 60 * 60 * 1000 // 巡查间隔:每小时;打开应用后先查一次
@@ -92,6 +99,32 @@ export default function ReminderPopup({ data, update }: Props) {
     }
   }, [])
 
+  // 恢复上一会话的巡查内容与「知道了」记录;已弹出的新巡查不被覆盖
+  useEffect(() => {
+    let cancelled = false
+    getSettings()
+      .then((s) => {
+        if (cancelled) return
+        const b = s.aiBriefing as BriefingSave | undefined
+        if (!b) return
+        setBriefing((prev) => (prev.length ? prev : (Array.isArray(b.lines) ? b.lines : [])))
+        if (Array.isArray(b.dismissed) && b.dismissed.length) {
+          setDismissed((prev) => new Set([...prev, ...b.dismissed]))
+        }
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // 巡查内容或「知道了」变化时落库(载荷很小,不防抖);全空不写,避免清掉存档
+  useEffect(() => {
+    if (briefing.length === 0 && dismissed.size === 0) return
+    const save: BriefingSave = { lines: briefing, dismissed: [...dismissed], ts: new Date().toISOString() }
+    saveSettings({ aiBriefing: save }).catch(() => {})
+  }, [briefing, dismissed])
+
   // AI 主动巡查:打开应用后先查一次,之后每小时一次;页面在后台时跳过,回前台由补扫触发
   const maybeBriefing = useCallback(async () => {
     if (document.hidden || checkingRef.current) return
@@ -102,7 +135,8 @@ export default function ReminderPopup({ data, update }: Props) {
       const cfg = await loadAiConfig()
       setAiCfg(cfg)
       if (!cfg.baseUrl || !cfg.model || !cfg.hasKey) return
-      const lines = await fetchAiBriefing(dataRef.current)
+      // 把最近已知晓的内容带给模型,避免反复提醒同一件事
+      const lines = await fetchAiBriefing(dataRef.current, { dismissed: [...dismissedRef.current].slice(-10) })
       const fresh = lines.filter((l) => !dismissedRef.current.has(l))
       // 全部都是已知道过的旧内容时不重新弹;否则替换为最新一批
       if (fresh.length > 0) setBriefing(fresh)
