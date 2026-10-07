@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Todo } from '../types'
-import { todayStr, uid } from '../api'
+import { TODO_DND_MIME, todayStr, uid } from '../api'
 import type { UpdateFn } from '../App'
+import { useLongPressDrag } from '../useLongPressDrag'
 import { IconCheck } from './icons'
 import { celebrateMiku } from './MikuStage'
 
@@ -43,6 +44,20 @@ export default function TodoPanel({ todos, update }: Props) {
   const [dragId, setDragId] = useState<string | null>(null)
   const [dropHint, setDropHint] = useState<{ id: string; pos: 'before' | 'after' } | null>(null)
   const addInputRef = useRef<HTMLInputElement>(null)
+  // 触屏长按拖动排序(桌面 HTML5 拖拽原本就有):与习惯列表同一套手感;
+  // 已完成 tab 有分组头(行距不均匀)且顺序按完成时间派生,不参与触屏拖动
+  const [settleId, setSettleId] = useState<string | null>(null)
+  const settleTimer = useRef<number | null>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const taskDrag = useRef<{
+    id: string
+    fromIndex: number
+    targetIndex: number
+    startY: number
+    rows: HTMLElement[]
+    rects: DOMRect[]
+    step: number
+  } | null>(null)
   // 撤销:删除/勾选/清空已完成前的整包快照,5s 内可一键还原(单槽,新操作顶掉旧的)
   const [undo, setUndo] = useState<{ id: number; label: string; snapshot: Todo[] } | null>(null)
   const undoTimer = useRef<number | null>(null)
@@ -59,9 +74,17 @@ export default function TodoPanel({ todos, update }: Props) {
   useEffect(
     () => () => {
       if (undoTimer.current !== null) window.clearTimeout(undoTimer.current)
+      if (settleTimer.current !== null) window.clearTimeout(settleTimer.current)
     },
     [],
   )
+
+  // 落位回弹:移动成功后对目标行短挂 .settle 类,播完自动摘除
+  const flashSettle = (id: string) => {
+    if (settleTimer.current !== null) window.clearTimeout(settleTimer.current)
+    setSettleId(id)
+    settleTimer.current = window.setTimeout(() => setSettleId(null), 450)
+  }
 
   // 操作前快照当前列表,浮出撤销条(5s 自动失效;连续操作以最后一次为准)
   const pushUndo = (label: string) => {
@@ -184,6 +207,78 @@ export default function TodoPanel({ todos, update }: Props) {
     cancelEdit()
   }
 
+  // 触屏长按拖动提交:当前 tab 是筛选/排序后的可见序列,先把该序列内的目标位置算好,
+  // 再把可见项的相对顺序平移回完整 todos 数组(未显示的项位置不动)
+  const commitVisibleMove = (fromIdx: number, toIdx: number) => {
+    const ids = visible.map((t) => t.id)
+    if (fromIdx < 0 || fromIdx >= ids.length) return
+    const movedId = ids[fromIdx]
+    const [moved] = ids.splice(fromIdx, 1)
+    ids.splice(toIdx, 0, moved)
+    const posOf = new Map(ids.map((id, i) => [id, i] as const))
+    update('todos', (items) => {
+      const ordered = items
+        .filter((t) => posOf.has(t.id))
+        .sort((a, b) => (posOf.get(a.id) ?? 0) - (posOf.get(b.id) ?? 0))
+      let k = 0
+      return items.map((t) => (posOf.has(t.id) ? ordered[k++] : t))
+    })
+    flashSettle(movedId)
+  }
+
+  const { bind: taskBind, wasDragRef: taskWasDrag } = useLongPressDrag({
+    disabled: filter === 'done' || sortByDue || editingId !== null,
+    onActivate: (press, _x, y) => {
+      press.classList.add('task-pointer-dragging')
+      const rows = Array.from(listRef.current?.querySelectorAll<HTMLElement>('.task') ?? [])
+      const rects = rows.map((r) => r.getBoundingClientRect())
+      taskDrag.current = {
+        id: press.dataset.todo ?? '',
+        fromIndex: rows.indexOf(press),
+        targetIndex: rows.indexOf(press),
+        startY: y,
+        rows,
+        rects,
+        step: rects.length > 1 ? rects[1].top - rects[0].top : 0,
+      }
+    },
+    onMove: (_x, y) => {
+      const d = taskDrag.current
+      if (!d || !d.rows.length || d.step <= 0) return
+      const from = Math.max(d.fromIndex, 0)
+      const h = d.rects[0].height
+      const minDy = d.rects[0].top - d.rects[from].top
+      const maxDy = d.rects[d.rects.length - 1].top - d.rects[from].top
+      const dy = Math.min(Math.max(y - d.startY, minDy), maxDy)
+      d.rows[from]?.style.setProperty('transform', `translateY(${dy}px)`)
+      const center = d.rects[from].top + h / 2 + dy
+      const target = Math.min(
+        Math.max(Math.round((center - d.rects[0].top - h / 2) / d.step), 0),
+        d.rows.length - 1,
+      )
+      if (target !== d.targetIndex) {
+        d.targetIndex = target
+        d.rows.forEach((r, i) => {
+          if (i === from) return
+          let shift = 0
+          if (from < target && i > from && i <= target) shift = -d.step
+          if (from > target && i >= target && i < from) shift = d.step
+          r.style.setProperty('transform', shift ? `translateY(${shift}px)` : '')
+        })
+      }
+    },
+    onEnd: (cancelled) => {
+      const d = taskDrag.current
+      taskDrag.current = null
+      d?.rows.forEach((r) => {
+        r.style.removeProperty('transform')
+        r.classList.remove('task-pointer-dragging')
+      })
+      if (cancelled || !d || d.targetIndex === d.fromIndex) return
+      commitVisibleMove(d.fromIndex, d.targetIndex)
+    },
+  })
+
   // 拖拽排序:把 source 移动到 target 的 before/after 位置(按截止日模式下禁用)
   const reorder = (sourceId: string, targetId: string, pos: 'before' | 'after') => {
     if (sourceId === targetId) return
@@ -242,20 +337,32 @@ export default function TodoPanel({ todos, update }: Props) {
     return (
       <div
         key={t.id}
+        data-todo={t.id}
         className={[
           'task',
           t.done ? 'is-done' : '',
           urgent ? 'urgent' : '',
           dragId === t.id ? 'dragging' : '',
           dropHint?.id === t.id ? `drop-${dropHint.pos}` : '',
+          settleId === t.id ? 'settle' : '',
         ]
           .filter(Boolean)
           .join(' ')}
         draggable={editingId !== t.id && !sortByDue}
+        {...taskBind}
+        // 长按拖动结束的那次点击在捕获阶段吞掉,防止落在行内按钮上误触(勾选/编辑/删除)
+        onClickCapture={(e) => {
+          if (taskWasDrag.current) {
+            taskWasDrag.current = false
+            e.stopPropagation()
+          }
+        }}
         onDragStart={(e) => {
           setDragId(t.id)
           e.dataTransfer.effectAllowed = 'move'
           e.dataTransfer.setData('text/plain', t.id)
+          // 私有 MIME:总览日历格据此识别「这是待办」并接住设截止日
+          e.dataTransfer.setData(TODO_DND_MIME, t.id)
         }}
         onDragEnd={() => {
           setDragId(null)
@@ -435,7 +542,7 @@ export default function TodoPanel({ todos, update }: Props) {
         </div>
       </div>
 
-      <div className={`task-list${sortByDue ? ' sorted' : ''}`}>
+      <div className={`task-list${sortByDue ? ' sorted' : ''}`} ref={listRef}>
         {doneGroups.map((g) => (
           <div key={g.key} className="task-group">
             {g.label && <div className="task-group-head">{g.label}</div>}

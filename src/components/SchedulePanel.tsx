@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import type { Course } from '../types'
-import { todayStr, uid } from '../api'
+import { COURSE_DND_MIME, HTML_DRAG, todayStr, uid } from '../api'
 import type { UpdateFn } from '../App'
+import { useLongPressDrag } from '../useLongPressDrag'
 import { parseCoursesText, parseTimetableFile, PERIOD_TIMES, type ParsedCourse } from '../timetableImport'
 
 interface Props {
@@ -72,6 +73,25 @@ export default function SchedulePanel({ courses, update }: Props) {
   // 撤销:删除课程/批量导入前的整包快照,5s 内可一键还原(单槽,新操作顶掉旧的)
   const [undo, setUndo] = useState<{ id: number; label: string; snapshot: Course[] } | null>(null)
   const undoTimer = useRef<number | null>(null)
+
+  // 课程卡拖动换格:拖到「大节×星期」格上放下即改时间/星期。目标格为空 = 移动
+  // (时长保持,起点 = 目标大节开始);目标格有课 = 两门课互换 {weekday,start,end},
+  // 单双周/周次等属性各归各主。桌面走 HTML5 DnD(格子高亮),触屏走长按指针拖动
+  // (幽灵卡跟随 + 命中格子高亮),都接入 pushUndo 撤销条。
+  const [crsDragId, setCrsDragId] = useState<string | null>(null)
+  const [dropCell, setDropCell] = useState<string | null>(null)
+  const [ghostId, setGhostId] = useState<string | null>(null)
+  const [hoverCell, setHoverCell] = useState<string | null>(null)
+  const [flashIds, setFlashIds] = useState<string[]>([])
+  const flashTimer = useRef<number | null>(null)
+  const tableRef = useRef<HTMLDivElement>(null)
+  const ghostRef = useRef<HTMLDivElement>(null)
+  // 触屏拖动会话(ref 直写幽灵位置避免逐帧 setState;hoverKey 存这里供松手提交)
+  const crsDrag = useRef<{
+    id: string
+    cells: HTMLElement[]
+    hoverKey: string | null
+  } | null>(null)
   // 文本导入弹层
   const [importOpen, setImportOpen] = useState(false)
   const [importText, setImportText] = useState('')
@@ -99,9 +119,17 @@ export default function SchedulePanel({ courses, update }: Props) {
   useEffect(
     () => () => {
       if (undoTimer.current !== null) window.clearTimeout(undoTimer.current)
+      if (flashTimer.current !== null) window.clearTimeout(flashTimer.current)
     },
     [],
   )
+
+  // 互换/移动成功后让涉事课程卡闪一下(0.8s 后摘除)
+  const flash = (ids: string[]) => {
+    if (flashTimer.current !== null) window.clearTimeout(flashTimer.current)
+    setFlashIds(ids)
+    flashTimer.current = window.setTimeout(() => setFlashIds([]), 800)
+  }
 
   // 操作前整包快照当前课程表,浮出撤销条(5s 自动失效;连续操作以最后一次为准)
   const pushUndo = (label: string) => {
@@ -192,6 +220,124 @@ export default function SchedulePanel({ courses, update }: Props) {
     }
     return { map, others }
   }, [weekCourses])
+
+  // ---------- 课程卡拖动换格 ----------
+
+  // 某个格子里当前显示的课程(block 格按大节归属;other 行按星期)。cellMap 里的
+  // 课程对象就是 courses 数组里的引用,互换时直接读写其字段即可。
+  const cellCourses = (cellKey: string): Course[] => {
+    const [label, wdStr] = cellKey.split('|')
+    const weekday = Number(wdStr)
+    if (label === 'other') return cellMap.others.filter((c) => c.weekday === weekday)
+    return cellMap.map.get(cellKey) ?? []
+  }
+
+  // 把 courseId 放到 cellKey 格:空格 = 移动(时长不变,起点 = 目标大节开始);
+  // 有课 = 与格内(最上面的)课程互换上课时间。「其他时间」行的空格没有可锚定的
+  // 时间,不可放置。拖回自己所在的格 = 无操作。
+  const dropCourse = (courseId: string, cellKey: string) => {
+    const dragged = courses.find((c) => c.id === courseId)
+    if (!dragged || !cellKey) return
+    const [label, wdStr] = cellKey.split('|')
+    const weekday = Number(wdStr)
+    const block = BLOCKS.find((b) => b.label === label)
+    const occupant = cellCourses(cellKey)[0]
+    if (occupant && occupant.id === courseId) return
+    if (label === 'other' && !occupant) return
+    if (occupant) {
+      pushUndo(`已互换「${dragged.name}」与「${occupant.name}」的上课时间`)
+      update('courses', (items) =>
+        items.map((c) => {
+          if (c.id === courseId)
+            return { ...c, weekday: occupant.weekday, start: occupant.start, end: occupant.end }
+          if (c.id === occupant.id)
+            return { ...c, weekday: dragged.weekday, start: dragged.start, end: dragged.end }
+          return c
+        }),
+      )
+      flash([courseId, occupant.id])
+      return
+    }
+    if (!block) return
+    // 时长保持不变;数据异常(结束≤开始)时回退为目标大节的完整时长
+    const draggedDur = toMin(dragged.end) - toMin(dragged.start)
+    const dur = draggedDur > 0 ? draggedDur : block.endMin - block.startMin
+    const newStart = block.startMin
+    pushUndo(`已移动「${dragged.name}」到周${WEEKDAYS[weekday - 1]} ${block.start}~${block.end}`)
+    update('courses', (items) =>
+      items.map((c) =>
+        c.id === courseId
+          ? { ...c, weekday, start: fmtMin(newStart), end: fmtMin(newStart + dur) }
+          : c,
+      ),
+    )
+    flash([courseId])
+  }
+
+  // 桌面 HTML5 拖拽:格子接住课程卡(自己已占的格与「其他时间」行空格不接)
+  const onCellDragOver = (e: React.DragEvent<HTMLDivElement>, cellKey: string) => {
+    if (!crsDragId) return
+    if (!e.dataTransfer.types.includes(COURSE_DND_MIME)) return
+    if (cellCourses(cellKey).some((c) => c.id === crsDragId)) return
+    if (cellKey.startsWith('other|') && cellCourses(cellKey).length === 0) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    if (dropCell !== cellKey) setDropCell(cellKey)
+  }
+
+  const onCellDrop = (e: React.DragEvent<HTMLDivElement>, cellKey: string) => {
+    if (dropCell !== cellKey || !crsDragId) return
+    e.preventDefault()
+    dropCourse(crsDragId, cellKey)
+    setDropCell(null)
+  }
+
+  // 触屏长按拖动:幽灵卡跟随指针(ref 直写 left/top,不逐帧 setState),命中格子高亮
+  const { bind: crsBind, wasDragRef: crsWasDrag } = useLongPressDrag({
+    onActivate: (press, x, y) => {
+      const id = press.dataset.course
+      if (!id) return
+      const cells = Array.from(
+        tableRef.current?.querySelectorAll<HTMLElement>('.sch-td[data-cell]') ?? [],
+      )
+      crsDrag.current = { id, cells, hoverKey: null }
+      setGhostId(id)
+      setHoverCell(null)
+      // 幽灵卡首帧位置(onMove 之前不重渲染,直接读会话里的坐标)
+      requestAnimationFrame(() => {
+        if (ghostRef.current) {
+          ghostRef.current.style.left = `${x + 12}px`
+          ghostRef.current.style.top = `${y + 10}px`
+        }
+      })
+    },
+    onMove: (x, y) => {
+      if (ghostRef.current) {
+        ghostRef.current.style.left = `${x + 12}px`
+        ghostRef.current.style.top = `${y + 10}px`
+      }
+      const d = crsDrag.current
+      if (!d) return
+      const hit = d.cells.find((el) => {
+        const r = el.getBoundingClientRect()
+        return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
+      })
+      const key = hit?.dataset.cell ?? null
+      // 拖到自己已占的格不算有效落点(视觉上不高亮,松手无操作)
+      const valid = key && !cellCourses(key).some((c) => c.id === d.id)
+      const next = valid ? key : null
+      d.hoverKey = next
+      setHoverCell((prev) => (prev === next ? prev : next))
+    },
+    onEnd: (cancelled) => {
+      const d = crsDrag.current
+      crsDrag.current = null
+      setGhostId(null)
+      setHoverCell(null)
+      if (cancelled || !d) return
+      dropCourse(d.id, d.hoverKey ?? '')
+    },
+  })
 
   // ---------- 当下意识:仅查看本周时,今天的课才有「进行中/下一节」概念 ----------
   const nowMin = now.getHours() * 60 + now.getMinutes()
@@ -426,16 +572,42 @@ export default function SchedulePanel({ courses, update }: Props) {
   const renderCard = (c: Course) => {
     const isOngoing = ongoingCourse?.id === c.id
     const isNext = !isOngoing && nextCourse?.id === c.id
+    const hidden = crsDragId === c.id || ghostId === c.id
     return (
       <button
         key={c.id}
-        className={`crs c${((c.color % COLOR_COUNT) + COLOR_COUNT) % COLOR_COUNT}${
-          isOngoing ? ' ongoing' : isNext ? ' up-next' : ''
-        }`}
-        title={`${c.name}${c.teacher ? `\n教师:${c.teacher}` : ''}${c.location ? `\n上课地点:${c.location}` : ''}\n${periodsOf(c)} ${c.start}-${c.end}${weeksOf(c) ? ` · ${weeksOf(c)}` : ''}\n点击编辑`}
+        data-course={c.id}
+        className={[
+          'crs',
+          `c${((c.color % COLOR_COUNT) + COLOR_COUNT) % COLOR_COUNT}`,
+          isOngoing ? 'ongoing' : isNext ? 'up-next' : '',
+          hidden ? 'dragging' : '',
+          flashIds.includes(c.id) ? 'swap-flash' : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+        draggable={HTML_DRAG}
+        title={`${c.name}${c.teacher ? `\n教师:${c.teacher}` : ''}${c.location ? `\n上课地点:${c.location}` : ''}\n${periodsOf(c)} ${c.start}-${c.end}${weeksOf(c) ? ` · ${weeksOf(c)}` : ''}\n点击编辑,拖到其他格子可换时间`}
+        {...crsBind}
+        // 长按拖动结束的那次点击吞掉,防止误开编辑弹窗
         onClick={(ev) => {
+          if (crsWasDrag.current) {
+            crsWasDrag.current = false
+            ev.stopPropagation()
+            return
+          }
           ev.stopPropagation()
           openEdit(c)
+        }}
+        onDragStart={(e) => {
+          setCrsDragId(c.id)
+          e.dataTransfer.effectAllowed = 'move'
+          e.dataTransfer.setData(COURSE_DND_MIME, c.id)
+          e.dataTransfer.setData('text/plain', c.name)
+        }}
+        onDragEnd={() => {
+          setCrsDragId(null)
+          setDropCell(null)
         }}
       >
         {(isOngoing || isNext) && <i className="crs-badge">{isOngoing ? '进行中' : '下一节'}</i>}
@@ -520,7 +692,7 @@ export default function SchedulePanel({ courses, update }: Props) {
       </div>
 
       <div className="sch-scroll">
-        <div className="sch-table">
+        <div className="sch-table" ref={tableRef}>
           <div className="sch-corner">周/节次</div>
           {WEEKDAYS.map((w, i) => (
             <div key={w} className={`sch-th ${i === todayIdx ? 'today' : ''}`}>
@@ -536,13 +708,22 @@ export default function SchedulePanel({ courses, update }: Props) {
                   {b.start}~{b.end}
                 </span>
               </div>
-              {WEEKDAYS.map((w, i) => {
-                const list = cellMap.map.get(`${b.label}|${i + 1}`) ?? []
+              {WEEKDAYS.map((_, i) => {
+                const cellKey = `${b.label}|${i + 1}`
+                const list = cellMap.map.get(cellKey) ?? []
                 return (
                   <div
-                    key={`${b.label}|${w}`}
-                    className={`sch-td ${i === todayIdx ? 'today' : ''}`}
+                    key={cellKey}
+                    data-cell={cellKey}
+                    className={`sch-td ${i === todayIdx ? 'today' : ''} ${
+                      dropCell === cellKey || hoverCell === cellKey ? 'drop-target' : ''
+                    }`}
                     onClick={(e) => onCellClick(i + 1, b, e)}
+                    onDragOver={(e) => onCellDragOver(e, cellKey)}
+                    onDrop={(e) => onCellDrop(e, cellKey)}
+                    onDragLeave={(e) => {
+                      if (e.target === e.currentTarget && dropCell === cellKey) setDropCell(null)
+                    }}
                   >
                     {list.map(renderCard)}
                   </div>
@@ -556,11 +737,25 @@ export default function SchedulePanel({ courses, update }: Props) {
               <div className="sch-rowhead">
                 <b>其他时间</b>
               </div>
-              {WEEKDAYS.map((w, i) => (
-                <div key={`other|${w}`} className={`sch-td ${i === todayIdx ? 'today' : ''}`}>
-                  {cellMap.others.filter((c) => c.weekday === i + 1).map(renderCard)}
-                </div>
-              ))}
+              {WEEKDAYS.map((_, i) => {
+                const cellKey = `other|${i + 1}`
+                return (
+                  <div
+                    key={cellKey}
+                    data-cell={cellKey}
+                    className={`sch-td ${i === todayIdx ? 'today' : ''} ${
+                      dropCell === cellKey || hoverCell === cellKey ? 'drop-target' : ''
+                    }`}
+                    onDragOver={(e) => onCellDragOver(e, cellKey)}
+                    onDrop={(e) => onCellDrop(e, cellKey)}
+                    onDragLeave={(e) => {
+                      if (e.target === e.currentTarget && dropCell === cellKey) setDropCell(null)
+                    }}
+                  >
+                    {cellMap.others.filter((c) => c.weekday === i + 1).map(renderCard)}
+                  </div>
+                )
+              })}
             </Fragment>
           )}
 
@@ -602,6 +797,19 @@ export default function SchedulePanel({ courses, update }: Props) {
           </div>
         </div>
       </div>
+
+      {/* 触屏拖动的幽灵卡:fixed 跟随指针,落点由格子命中测试决定 */}
+      {ghostId &&
+        (() => {
+          const g = courses.find((c) => c.id === ghostId)
+          if (!g) return null
+          return (
+            <div ref={ghostRef} className={`crs crs-ghost c${((g.color % COLOR_COUNT) + COLOR_COUNT) % COLOR_COUNT}`}>
+              <span className="crs-name">{g.name}</span>
+              {g.location && <span className="crs-meta">@{g.location}</span>}
+            </div>
+          )
+        })()}
 
       {undo && (
         <div key={undo.id} className="todo-undo" role="status">

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type CSSProperties } from 'react'
 import type { AppData } from './types'
-import { ApiError, getSettings, loadAll, logout, me, saveCollection, saveSettings, nowLocalStr, type CollectionKey } from './api'
+import { ApiError, getSettings, HTML_DRAG, loadAll, logout, me, saveCollection, saveSettings, nowLocalStr, type CollectionKey } from './api'
 import { applyPet, freshPet, makeMurmurLine, sanitizePet, type MikuPet } from './mikuPet'
 import LoginView from './components/LoginView'
 import TodoPanel from './components/TodoPanel'
@@ -150,8 +150,7 @@ function loadNavPos(): DockPos {
 }
 
 // 触屏设备不走 HTML5 拖拽(长按行为怪异且不可靠),改用长按指针拖动;鼠标设备保留原生拖拽
-const NAV_HTML_DRAG =
-  typeof window !== 'undefined' && window.matchMedia('(hover: hover) and (pointer: fine)').matches
+// (常量定义在 api.ts,待办/习惯/课表等面板的拖拽共用同一判定)
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
 const WEEKDAYS_EN = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT']
@@ -320,7 +319,7 @@ export default function App() {
   // ---------- 底部导航长按拖动排序(触屏):与总览胶囊同一套交互 ----------
   // 触屏上 HTML5 拖拽长按行为怪异:长按约 380ms 进入指针拖动,横向(≤640 底栏)
   // 或纵向(平板侧栏)按测量到的主轴位移让位,松手一次提交;未满阈值是普通点击
-  // 切视图。鼠标设备仍走原生 HTML5 拖拽(见 NAV_HTML_DRAG)。
+  // 切视图。鼠标设备仍走原生 HTML5 拖拽(见 HTML_DRAG)。
   const navPointerDrag = useRef<{
     key: ViewKey
     fromIndex: number
@@ -1704,7 +1703,7 @@ export default function App() {
                 className={`nav-item ${view === key ? 'active' : ''} ${isDragging ? 'dragging' : ''} ${
                   isTarget ? `drop-${navDropTarget!.pos}` : ''
                 }`}
-                draggable={NAV_HTML_DRAG}
+                draggable={HTML_DRAG}
                 onClick={() => {
                   if (navSuppressClick.current) {
                     navSuppressClick.current = false
@@ -1893,7 +1892,7 @@ export default function App() {
           const panelEls: Record<PanelId, JSX.Element> = {
             todo: <TodoPanel todos={data.todos} update={update} />,
             schedule: <SchedulePanel courses={data.courses} update={update} />,
-            cal: <CalendarPanel habits={data.habits} />,
+            cal: <CalendarPanel habits={data.habits} todos={data.todos} update={update} />,
             hab: <HabitsPanel habits={data.habits} update={update} />,
             quicknote: <QuickNoteCard data={data} org={notesOrg} />,
             ai: <AiPanel data={data} update={update} onNavigate={setView} />,

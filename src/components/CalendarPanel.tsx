@@ -1,8 +1,13 @@
 import { useMemo, useState } from 'react'
-import type { Habit } from '../types'
+import type { Habit, Todo } from '../types'
+import { TODO_DND_MIME } from '../api'
+import type { UpdateFn } from '../App'
+import { MIKU_NOD_EVENT } from './MikuStage'
 
 interface Props {
   habits: Habit[]
+  todos: Todo[]
+  update: UpdateFn
 }
 
 const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'] // 周一开头
@@ -18,9 +23,11 @@ function levelOf(done: number, total: number): number {
   return 1
 }
 
-export default function CalendarPanel({ habits }: Props) {
+export default function CalendarPanel({ habits, todos, update }: Props) {
   const now = new Date()
   const [cursor, setCursor] = useState({ year: now.getFullYear(), month: now.getMonth() })
+  // 从待办卡拖任务进来时悬停的日期格(高亮提示落点;仅桌面 HTML5 拖拽)
+  const [dropDay, setDropDay] = useState<string | null>(null)
 
   // 每天的打卡习惯数
   const dayStats = useMemo(() => {
@@ -32,6 +39,16 @@ export default function CalendarPanel({ habits }: Props) {
     }
     return map
   }, [habits])
+
+  // 每天到期的未完成待办数(截止日圆点;已完成的无截止日概念,不计)
+  const dueStats = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const t of todos) {
+      if (t.done || !t.dueDate) continue
+      map.set(t.dueDate, (map.get(t.dueDate) ?? 0) + 1)
+    }
+    return map
+  }, [todos])
 
   const { cells, todayKey } = useMemo(() => {
     const { year, month } = cursor
@@ -53,6 +70,17 @@ export default function CalendarPanel({ habits }: Props) {
       const d = new Date(year, month + delta, 1)
       return { year: d.getFullYear(), month: d.getMonth() }
     })
+
+  // 接住从待办卡拖来的任务:设为该日截止日,Miku 点头示意(安排好了)
+  const setDue = (key: string, e: React.DragEvent) => {
+    const id = e.dataTransfer.getData(TODO_DND_MIME)
+    setDropDay(null)
+    if (!id) return
+    const todo = todos.find((t) => t.id === id)
+    if (!todo || todo.done || todo.dueDate === key) return
+    update('todos', (items) => items.map((t) => (t.id === id ? { ...t, dueDate: key } : t)))
+    window.dispatchEvent(new CustomEvent(MIKU_NOD_EVENT))
+  }
 
   return (
     <div className="panel panel-cal">
@@ -87,12 +115,39 @@ export default function CalendarPanel({ habits }: Props) {
           if (d === null) return <span key={i} className="day off" />
           const key = `${cursor.year}-${String(cursor.month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
           const done = dayStats.get(key) ?? 0
+          const dueCount = dueStats.get(key) ?? 0
           const lv = levelOf(done, habits.length)
           const isToday = key === todayKey
-          const tip = done > 0 ? `${key} · 习惯打卡 ${done}/${habits.length}` : `${key} · 无记录`
+          const tip = [
+            done > 0 ? `${key} · 习惯打卡 ${done}/${habits.length}` : `${key} · 无记录`,
+            dueCount > 0 ? `${dueCount} 个待办在这天截止` : '',
+            '从待办卡拖任务到这里可设截止日',
+          ]
+            .filter(Boolean)
+            .join('\n')
           return (
-            <span key={i} className={`day l${lv} ${isToday ? 'today' : ''}`} title={tip}>
+            <span
+              key={i}
+              className={`day l${lv} ${isToday ? 'today' : ''} ${dropDay === key ? 'drop-ok' : ''}`}
+              title={tip}
+              onDragOver={(e) => {
+                if (!e.dataTransfer.types.includes(TODO_DND_MIME)) return
+                e.preventDefault()
+                e.dataTransfer.dropEffect = 'move'
+                if (dropDay !== key) setDropDay(key)
+              }}
+              onDragLeave={(e) => {
+                if (e.target === e.currentTarget && dropDay === key) setDropDay(null)
+              }}
+              onDrop={(e) => {
+                if (dropDay === key) {
+                  e.preventDefault()
+                  setDue(key, e)
+                }
+              }}
+            >
               <span className="num">{d}</span>
+              {dueCount > 0 && <i className="due-dot" />}
             </span>
           )
         })}

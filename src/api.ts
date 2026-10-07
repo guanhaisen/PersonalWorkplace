@@ -12,6 +12,18 @@ export type CollectionKey =
   | 'reports'
   | 'memories'
 
+// 精确指针(鼠标)设备才启用 HTML5 拖拽;触屏设备长按行为怪异,统一走长按指针拖动
+// (useLongPressDrag)。放这里而不是 App,供各面板组件共用且不产生对 App 的循环依赖。
+export const HTML_DRAG =
+  typeof window !== 'undefined' && window.matchMedia('(hover: hover) and (pointer: fine)').matches
+
+// 跨组件拖放的私有 MIME:待办行 → 日历格(设截止日)。不用 text/plain 是为了带类型
+// 信息,日历格据此拒绝课表等其他拖拽源。
+export const TODO_DND_MIME = 'application/x-workbench-todo'
+
+// 课表课程卡拖动换格用的私有 MIME(只在课表面板内部消化,也用于桌面拖拽的类型判定)
+export const COURSE_DND_MIME = 'application/x-workbench-course'
+
 /** 带 HTTP 状态码的错误:401 表示未登录/会话过期,调用方据此回到登录页 */
 export class ApiError extends Error {
   status: number

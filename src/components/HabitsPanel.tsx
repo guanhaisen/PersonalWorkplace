@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Habit } from '../types'
-import { streak, todayStr, uid } from '../api'
+import { HTML_DRAG, streak, todayStr, uid } from '../api'
 import type { UpdateFn } from '../App'
+import { useLongPressDrag } from '../useLongPressDrag'
 import { IconCheck } from './icons'
 import HabitDetailCard from './HabitDetailCard'
 import { celebrateMiku } from './MikuStage'
@@ -54,6 +55,23 @@ export default function HabitsPanel({ habits, update }: Props) {
   const [undo, setUndo] = useState<{ id: number; label: string; snapshot: Habit[] } | null>(null)
   const undoTimer = useRef<number | null>(null)
 
+  // 拖拽排序:桌面走 HTML5 DnD(before/after 内嵌线指示),触屏走长按指针拖动
+  // (行等高、其余行 transform 让位、松手一次提交;顺序随 habits 数组落库)
+  const [dragId, setDragId] = useState<string | null>(null)
+  const [dropHint, setDropHint] = useState<{ id: string; pos: 'before' | 'after' } | null>(null)
+  const [settleId, setSettleId] = useState<string | null>(null)
+  const settleTimer = useRef<number | null>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const hbDrag = useRef<{
+    id: string
+    fromIndex: number
+    targetIndex: number
+    startY: number
+    rows: HTMLElement[]
+    rects: DOMRect[]
+    step: number
+  } | null>(null)
+
   // 最近 7 天(含今天)的日期与星期标签
   const last7 = useMemo(() => {
     const days: { date: string; label: string }[] = []
@@ -74,9 +92,97 @@ export default function HabitsPanel({ habits, update }: Props) {
     () => () => {
       if (undoTimer.current !== null) window.clearTimeout(undoTimer.current)
       if (delArmTimer.current !== null) window.clearTimeout(delArmTimer.current)
+      if (settleTimer.current !== null) window.clearTimeout(settleTimer.current)
     },
     [],
   )
+
+  // 落位回弹:移动成功后对目标行短挂 .settle 类,播完自动摘除
+  const flashSettle = (id: string) => {
+    if (settleTimer.current !== null) window.clearTimeout(settleTimer.current)
+    setSettleId(id)
+    settleTimer.current = window.setTimeout(() => setSettleId(null), 450)
+  }
+
+  // 桌面拖拽提交:把 source 移到 target 的 before/after(与待办列表同款)
+  const reorder = (sourceId: string, targetId: string, pos: 'before' | 'after') => {
+    if (sourceId === targetId) return
+    update('habits', (items) => {
+      const next = [...items]
+      const from = next.findIndex((x) => x.id === sourceId)
+      if (from < 0) return items
+      const [moved] = next.splice(from, 1)
+      let to = next.findIndex((x) => x.id === targetId)
+      if (to < 0) {
+        next.splice(from, 0, moved) // 目标不在了,放回原位
+        return next
+      }
+      if (pos === 'after') to += 1
+      next.splice(to, 0, moved)
+      return next
+    })
+  }
+
+  // 触屏长按拖动:长按进入后行跟随指针,其余行按等步长让位,松手一次 splice 提交
+  const { bind: hbBind, wasDragRef: hbWasDrag } = useLongPressDrag({
+    onActivate: (press, _x, y) => {
+      const id = press.dataset.habit
+      if (!id) return
+      press.classList.add('hb-dragging')
+      const rows = Array.from(listRef.current?.querySelectorAll<HTMLElement>('.habit-line') ?? [])
+      const rects = rows.map((r) => r.getBoundingClientRect())
+      hbDrag.current = {
+        id,
+        fromIndex: rows.indexOf(press),
+        targetIndex: rows.indexOf(press),
+        startY: y,
+        rows,
+        rects,
+        step: rects.length > 1 ? rects[1].top - rects[0].top : 0,
+      }
+    },
+    onMove: (_x, y) => {
+      const d = hbDrag.current
+      if (!d || !d.rows.length || d.step <= 0) return
+      const from = Math.max(d.fromIndex, 0)
+      const h = d.rects[0].height
+      const minDy = d.rects[0].top - d.rects[from].top
+      const maxDy = d.rects[d.rects.length - 1].top - d.rects[from].top
+      const dy = Math.min(Math.max(y - d.startY, minDy), maxDy)
+      d.rows[from]?.style.setProperty('transform', `translateY(${dy}px)`)
+      const center = d.rects[from].top + h / 2 + dy
+      const target = Math.min(
+        Math.max(Math.round((center - d.rects[0].top - h / 2) / d.step), 0),
+        d.rows.length - 1,
+      )
+      if (target !== d.targetIndex) {
+        d.targetIndex = target
+        d.rows.forEach((r, i) => {
+          if (i === from) return
+          let shift = 0
+          if (from < target && i > from && i <= target) shift = -d.step
+          if (from > target && i >= target && i < from) shift = d.step
+          r.style.setProperty('transform', shift ? `translateY(${shift}px)` : '')
+        })
+      }
+    },
+    onEnd: (cancelled) => {
+      const d = hbDrag.current
+      hbDrag.current = null
+      d?.rows.forEach((r) => {
+        r.style.removeProperty('transform')
+        r.classList.remove('hb-dragging')
+      })
+      if (cancelled || !d || d.targetIndex === d.fromIndex) return
+      update('habits', (items) => {
+        const next = [...items]
+        const [moved] = next.splice(d.fromIndex, 1)
+        next.splice(d.targetIndex, 0, moved)
+        return next
+      })
+      flashSettle(d.id)
+    },
+  })
 
   const pushUndo = (label: string) => {
     if (undoTimer.current !== null) window.clearTimeout(undoTimer.current)
@@ -179,7 +285,7 @@ export default function HabitsPanel({ habits, update }: Props) {
         </button>
       </div>
 
-      <div className="habit-list">
+      <div className="habit-list" ref={listRef}>
         {/* 表头放进滚动容器并吸顶:与条目行共用同一宽度,有滚动条也对齐 */}
         <div className="habit-grid habit-head">
           <span className="hlabel">今</span>
@@ -198,7 +304,54 @@ export default function HabitsPanel({ habits, update }: Props) {
           const doneToday = !!h.records[today]
           const armed = delArmId === h.id
           return (
-            <div key={h.id} className={`habit-line${doneToday ? ' done-today' : ''}`}>
+            <div
+              key={h.id}
+              data-habit={h.id}
+              className={[
+                'habit-line',
+                doneToday ? 'done-today' : '',
+                dragId === h.id ? 'dragging' : '',
+                dropHint?.id === h.id ? `drop-${dropHint.pos}` : '',
+                settleId === h.id ? 'settle' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              draggable={HTML_DRAG}
+              {...hbBind}
+              // 长按拖动结束的那次点击在捕获阶段吞掉,防止落在行内按钮上误触(打卡/删除/详情)
+              onClickCapture={(e) => {
+                if (hbWasDrag.current) {
+                  hbWasDrag.current = false
+                  e.stopPropagation()
+                }
+              }}
+              onDragStart={(e) => {
+                setDragId(h.id)
+                e.dataTransfer.effectAllowed = 'move'
+                e.dataTransfer.setData('text/plain', h.id)
+              }}
+              onDragEnd={() => {
+                setDragId(null)
+                setDropHint(null)
+              }}
+              onDragOver={(e) => {
+                if (!dragId || dragId === h.id) return
+                e.preventDefault()
+                e.dataTransfer.dropEffect = 'move'
+                const rect = e.currentTarget.getBoundingClientRect()
+                const pos = e.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+                if (dropHint?.id !== h.id || dropHint.pos !== pos) setDropHint({ id: h.id, pos })
+              }}
+              onDrop={(e) => {
+                e.preventDefault()
+                if (dragId && dropHint?.id === h.id) reorder(dragId, h.id, dropHint.pos)
+                setDragId(null)
+                setDropHint(null)
+              }}
+              onDragLeave={(e) => {
+                if (e.target === e.currentTarget && dropHint?.id === h.id) setDropHint(null)
+              }}
+            >
               <button
                 className={`today-cb ${doneToday ? 'on' : ''}`}
                 title={doneToday ? '取消今天打卡' : '打卡今天'}

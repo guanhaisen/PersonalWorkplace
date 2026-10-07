@@ -7743,3 +7743,126 @@ kbd {
     padding: 12px 13px 10px;
   }
 }
+
+/* ===================== 万物皆可拖动:补齐的拖拽交互 ===================== */
+
+/* —— 拖起实体感:拖动中的元素微放大 + 轻倾斜。用独立 scale/rotate 属性,
+      与 JS 写入的 transform 位移互不覆盖,导航/收藏/胶囊等既有拖动同享 —— */
+.nav-item.dragging,
+.nav-item.nav-dragging,
+.task.dragging,
+.task.task-pointer-dragging,
+.habit-line.hb-dragging,
+.head-link.link-dragging,
+.links-more-card.grid-dragging,
+.cell.has-cap.cap-dragging {
+  scale: 1.04;
+  rotate: 1.2deg;
+}
+
+/* —— 习惯行拖拽排序(习惯页与总览卡共用):桌面 HTML5 内嵌线指示 —— */
+.habit-line.dragging {
+  opacity: 0.4;
+}
+
+.habit-line.drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.habit-line.drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* 触屏长按:被拖行浮起,压过其他行 */
+.habit-line.hb-dragging {
+  z-index: 5;
+  transition: none;
+  background: var(--card);
+  box-shadow: var(--shadow-pop-sm);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* —— 待办行触屏长按拖动(桌面 HTML5 的 .dragging 已有半透明) —— */
+.task.task-pointer-dragging {
+  z-index: 5;
+  transition: none;
+  background: #fbfbf7;
+  box-shadow: var(--shadow-pop-sm);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* —— 课表课程卡拖动换格:被拖课的全部实例(跨节次的课占多格)半透明 —— */
+.crs.dragging {
+  opacity: 0.35;
+}
+
+/* 桌面拖拽悬停 / 触屏命中:目标格描环 + 提亮(盖过今日格的浅底) */
+.sch-td.drop-target {
+  box-shadow: inset 0 0 0 2px var(--card), inset 0 0 0 4px var(--accent);
+  background: var(--accent-tint);
+}
+
+/* 触屏拖动的幽灵卡:fixed 跟随指针,复用课程卡配色 */
+.crs.crs-ghost {
+  position: fixed;
+  z-index: 90;
+  width: 128px;
+  min-height: 56px;
+  flex: none;
+  margin: 0;
+  pointer-events: none;
+  box-shadow: var(--shadow-pop-sm);
+  scale: 1.05;
+  rotate: 2deg;
+}
+
+/* 互换/移动成功:落点课程卡外圈闪一下 */
+@keyframes crs-swap-flash {
+  0% {
+    box-shadow: 0 0 0 0 var(--accent);
+  }
+  100% {
+    box-shadow: 0 0 0 9px rgba(0, 0, 0, 0);
+  }
+}
+
+.crs.swap-flash {
+  animation: crs-swap-flash 0.8s var(--ease-out);
+}
+
+/* —— 总览日历:接住从待办卡拖来的任务设截止日 —— */
+.day.drop-ok {
+  box-shadow: inset 0 0 0 2px var(--card), inset 0 0 0 4px var(--accent);
+  scale: 1.06;
+}
+
+/* 有待办截止的日期:红点提示(与习惯热力的绿色区分) */
+.day .due-dot {
+  position: absolute;
+  bottom: 5px;
+  left: 50%;
+  translate: -50% 0;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--red);
+}
+
+/* —— 落位回弹:拖动提交后对落点行短挂 .settle —— */
+@keyframes settle-pop {
+  0% {
+    scale: 1.06;
+  }
+  55% {
+    scale: 0.98;
+  }
+  100% {
+    scale: 1;
+  }
+}
+
+.settle {
+  animation: settle-pop 0.42s var(--ease-out);
+}
