@@ -133,6 +133,15 @@ function loadNavOrder(): ViewKey[] {
   return [...DEFAULT_NAV]
 }
 
+// 导航栏位置:桌面端可在左侧栏/底部栏之间自由切换并记住选择;
+// ≤640 手机固定底栏(样式由媒体查询强制),此偏好仅在 >640 生效
+const NAV_POS_KEY = 'nav.position.v1'
+type NavPos = 'side' | 'bottom'
+
+function loadNavPos(): NavPos {
+  return localStorage.getItem(NAV_POS_KEY) === 'bottom' ? 'bottom' : 'side'
+}
+
 // 触屏设备不走 HTML5 拖拽(长按行为怪异且不可靠),改用长按指针拖动;鼠标设备保留原生拖拽
 const NAV_HTML_DRAG =
   typeof window !== 'undefined' && window.matchMedia('(hover: hover) and (pointer: fine)').matches
@@ -152,6 +161,7 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [slots, setSlots] = useState<PanelId[]>(loadSlots)
   const [navOrder, setNavOrder] = useState<ViewKey[]>(loadNavOrder)
+  const [navPos, setNavPos] = useState<NavPos>(loadNavPos)
   const [navDrag, setNavDrag] = useState<ViewKey | null>(null)
   const [navDropTarget, setNavDropTarget] = useState<{ key: ViewKey; pos: 'before' | 'after' } | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
@@ -453,8 +463,11 @@ export default function App() {
   const FAB_POP_DELAY = 280
 
   const clampFab = (p: { right: number; bottom: number }, size?: { w: number; h: number }) => {
-    // 手机端底部有图标导航栏,悬浮球拖动时最低不压到它
-    const navReserve = window.matchMedia('(max-width: 640px)').matches ? 64 : 0
+    // 手机端与「底部导航」模式下屏幕底部有图标导航栏,悬浮球拖动时最低不压到它
+    const navReserve =
+      window.matchMedia('(max-width: 640px)').matches || document.querySelector('.shell.nav-bottom')
+        ? 64
+        : 0
     // Miku 化后按钮比原 52px 大,拖动中按实际尺寸钳制;初始读档时按钮尚未挂载,退回常量
     const w = size?.w ?? FAB_SIZE
     const h = size?.h ?? FAB_SIZE
@@ -938,8 +951,33 @@ export default function App() {
   }, [navOrder])
 
   useEffect(() => {
+    localStorage.setItem(NAV_POS_KEY, navPos)
+  }, [navPos])
+
+  // 侧边 ⇄ 底部互切;两个入口(侧栏脚部按钮/命令面板)共用
+  const toggleNavPos = () => setNavPos((p) => (p === 'side' ? 'bottom' : 'side'))
+
+  useEffect(() => {
     localStorage.setItem('sidebar.collapsed', sidebarCollapsed ? '1' : '0')
   }, [sidebarCollapsed])
+
+  // 切换导航位置后底栏占位变化:挂载初始钳制读不到 DOM 类(首帧前)也会在此修正,
+  // 以 localStorage 存档为基准重钳,悬浮球不压进底部导航
+  useEffect(() => {
+    const el = fabRef.current
+    const size = { w: el?.offsetWidth ?? FAB_SIZE, h: el?.offsetHeight ?? FAB_SIZE }
+    let saved: { right: number; bottom: number } | null = null
+    try {
+      const raw = localStorage.getItem(FAB_POS_KEY)
+      const p = raw ? JSON.parse(raw) : null
+      if (p && typeof p?.right === 'number' && typeof p?.bottom === 'number') saved = p
+    } catch {
+      // 忽略损坏存档
+    }
+    if (saved) setFabPos(clampFab(saved, size))
+    // clampFab 闭包内直接查 DOM 的 nav-bottom 类,切换当帧已提交,无需更多依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navPos])
 
   // 总览拖拽放置:课表卡固定占两列,拖动它 = 与目标位置的两张卡整块对调;
   // 拖普通卡到课表上同理;普通卡之间直接互换
@@ -1256,6 +1294,16 @@ export default function App() {
     { id: 'new-note', label: '记一笔随手记', hint: 'M', run: () => { setView('notes'); setTimeout(() => emit('workbench:focus-note-input'), 0) } },
     { id: 'ask-ai', label: '询问 Miku', run: () => { setView('ai'); setTimeout(() => emit('workbench:ai-focus'), 0) } },
     { id: 'export', label: '导出全部数据', run: handleExport },
+    // 导航栏位置切换:仅桌面/平板有意义(手机固定底栏),≤640 不进面板
+    ...(window.matchMedia('(min-width: 641px)').matches
+      ? [
+          {
+            id: 'nav-pos',
+            label: `导航栏移到${navPos === 'side' ? '底部' : '侧边'}`,
+            run: toggleNavPos,
+          },
+        ]
+      : []),
     // 头部低频工具在手机上收进面板(桌面头部按钮保留,面板里也有一份)
     { id: 'start-page', label: '设为开始页', run: () => setStartPageOpen(true) },
     { id: 'reset-layout', label: '重置布局', run: resetLayout },
@@ -1487,8 +1535,10 @@ export default function App() {
   // 所有面板只挂载一次,视图切换仅改 CSS 网格布局与可见性,
   // 保证各面板内部状态(筛选、草稿等)跨视图保留
   return (
-    <div className="shell">
-      <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
+    // 底部导航模式:sidebar 变顶栏、nav 变 fixed 底栏,样式见 index.css 的 .shell.nav-bottom
+    <div className={`shell ${navPos === 'bottom' ? 'nav-bottom' : ''}`}>
+      {/* 底部模式下不套 collapsed(收起按钮已隐藏),避免图标-only 样式污染顶栏;切回侧栏时原状态仍在 */}
+      <aside className={`sidebar ${navPos === 'side' && sidebarCollapsed ? 'collapsed' : ''}`}>
         <button
           className="collapse-btn"
           onClick={() => setSidebarCollapsed((v) => !v)}
@@ -1600,6 +1650,14 @@ export default function App() {
             <em>·</em>
             <button className="data-link" onClick={() => importFileRef.current?.click()} title="从 JSON 备份导入(覆盖当前数据)">
               导入
+            </button>
+            <em>·</em>
+            <button
+              className="data-link nav-pos-btn"
+              onClick={toggleNavPos}
+              title={`导航栏移到${navPos === 'side' ? '底部' : '侧边'}`}
+            >
+              {navPos === 'side' ? '底栏' : '侧栏'}
             </button>
           </div>
           <input

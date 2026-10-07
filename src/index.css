@@ -1221,6 +1221,146 @@ textarea::placeholder {
   }
 }
 
+/* ---------- 导航栏位置:桌面端可选底部导航(.shell.nav-bottom) ---------- */
+/* 用户偏好(侧栏 ⇄ 底栏)存 localStorage,由 App 挂类切换;≤640 手机由移动端块
+   强制底栏,故这里全部圈在 min-width: 641px,不与移动端样式互相覆盖 */
+@media (min-width: 641px) {
+  .shell.nav-bottom {
+    flex-direction: column;
+  }
+
+  /* 侧栏 → 顶栏:品牌居左,账号/保存态/导出导入居右 */
+  .shell.nav-bottom .sidebar {
+    flex: none;
+    width: auto;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 18px;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+    z-index: 40;
+  }
+
+  .shell.nav-bottom .collapse-btn,
+  .shell.nav-bottom .brand-sub,
+  .shell.nav-bottom .sf {
+    display: none;
+  }
+
+  .shell.nav-bottom .brand {
+    flex: none;
+  }
+
+  /* 导航本体:固定底栏,条目按内容自适应、均匀分布 */
+  .shell.nav-bottom .nav {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 46;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    justify-content: space-around;
+    gap: 0;
+    margin: 0;
+    padding: 5px 12px calc(5px + env(safe-area-inset-bottom));
+    background: var(--paper-2);
+    border-top: 1px solid var(--line);
+  }
+
+  .shell.nav-bottom .nav-item {
+    flex: 0 1 auto;
+    min-width: 0;
+    height: 52px;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    padding: 0 14px;
+  }
+
+  .shell.nav-bottom .nav-item .no {
+    display: none;
+  }
+
+  .shell.nav-bottom .nav-item .lab {
+    font-size: 11px;
+    line-height: 1;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+
+  .shell.nav-bottom .nav-item svg {
+    width: 21px;
+    height: 21px;
+  }
+
+  /* 选中态:顶部圆头短横条(横排栏语言,替代侧栏的左侧竖条) */
+  .shell.nav-bottom .nav-item.active::before {
+    left: 50%;
+    right: auto;
+    top: 0;
+    bottom: auto;
+    width: 18px;
+    height: 3px;
+    border-radius: 0 0 3px 3px;
+    transform: translateX(-50%);
+    background: linear-gradient(90deg, var(--accent), var(--accent-deep));
+  }
+
+  /* 桌面 HTML5 拖拽换位的落点指示随横排转向:左右插线 */
+  .shell.nav-bottom .nav-item.drop-before {
+    box-shadow: inset 2px 0 0 var(--accent);
+  }
+
+  .shell.nav-bottom .nav-item.drop-after {
+    box-shadow: inset -2px 0 0 var(--accent);
+  }
+
+  /* 顶栏右侧信息区:竖排转横排 */
+  .shell.nav-bottom .sidebar-foot {
+    flex: none;
+    flex-direction: row;
+    align-items: center;
+    gap: 16px;
+    margin: 0 0 0 auto;
+    padding: 0;
+    border-top: none;
+  }
+
+  .shell.nav-bottom .user-line {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  .shell.nav-bottom .save-line,
+  .shell.nav-bottom .data-links {
+    flex: none;
+  }
+
+  /* 内容区给固定底栏让位 */
+  .shell.nav-bottom .content {
+    padding-bottom: calc(78px + env(safe-area-inset-bottom));
+  }
+}
+
+/* 大屏底部导航:内容区仍是独立滚动容器,高度从定死 100vh 改为撑满顶栏以下剩余空间 */
+@media (min-width: 1081px) {
+  .shell.nav-bottom .content {
+    height: auto;
+    flex: 1;
+    min-height: 0;
+  }
+}
+
+/* 手机固定底栏,位置切换按钮无意义,不显示 */
+@media (max-width: 640px) {
+  .nav-pos-btn {
+    display: none;
+  }
+}
+
 /* ---------- 面板通用 ---------- */
 
 .panel {
